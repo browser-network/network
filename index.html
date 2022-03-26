@@ -1,0 +1,87 @@
+<!doctype html>
+
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>Network</title>
+  <meta name="description" content="The network">
+</head>
+
+<body style="background-color: black; color: white;">
+
+  <code>
+    <h2><code id='client-id'></code></h2>
+
+    <h3>connections</h3>
+    <code id='connections'></code>
+
+    <h3>messages</h3>
+    <p>most recent message from: <code id='most-recent'></code></p>
+    <code id='messages'></code>
+
+    <h3>seen message id count</h3>
+    <code id='seen-messages'></code>
+
+    <br>
+    <br>
+
+    <button onclick='sendMessage(network.clientId + ": Hello there!")'>Say Hi</button>
+  </code>
+
+  <script src="/umd/network.js"></script>
+
+  <script>
+    const APP_ID = 'Woohooo-this-is-our-test-app'
+
+    const network = window.network = new Network.Network({
+      switchAddress: 'http://localhost:5678',
+      networkId: 'our-awesome-database',
+      clientId: localStorage.clientId || crypto.randomUUID(),
+      config: {}
+    })
+
+    function sendMessage(message) {
+      network.broadcast({
+        id: crypto.randomUUID(),
+        type: 'helloooo',
+        appId: APP_ID,
+        data: message,
+        ttl: 1,
+        destination: '*',
+        timestamp: Date.now(),
+        clientId: network.clientId
+      })
+    }
+
+    network.on('message', ({ appId, message}) => {
+      switch (message.type) {
+        case 'helloooo': {
+          console.log('got app message:', message)
+          const innerHTML = document.querySelector('#messages').innerHTML
+          document.querySelector('#messages').innerHTML = message.data + '</br>' + innerHTML
+          break;
+        }
+        default: {
+          document.querySelector('#most-recent').innerHTML = message.clientId
+        }
+      }
+    })
+
+    setInterval(function() {
+      document.querySelector('#client-id').innerHTML = JSON.stringify(network.clientId, 0, 2)
+
+      document.querySelector('#connections').innerHTML = network.connections.bind(network)().map(c => {
+        return '<br>' + JSON.stringify({
+          connectionId: c.id,
+          clientId: c.clientId
+        })
+      })
+      document.querySelector('#seen-messages').innerHTML = JSON.stringify(Object.keys(network._seenMessageIds).length, 0, 2)
+    }, 500)
+
+    window.DEBUG = 3
+  </script>
+</body>
+</html>
