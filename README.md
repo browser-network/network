@@ -14,18 +14,18 @@ Every browser window connects to many others, creating a robust network
 through which messages can be sent.
 
 The Network can be installed via
-[npm](npmjs.org/package/@browser-network/network) or
-[cdn](unpkg.com/@browser-network/network/umd/network.min.js) and dropped into
+[npm](//npmjs.org/package/@browser-network/network) or
+[cdn](//unpkg.com/@browser-network/network/umd/network.min.js) and dropped into
 any web app and the app will become an interconnected network of all the users
 who currently have the app open.
 
 A million and one things can be done with such a network. The original impetus
 for writing this was to create a [decentralized database of
-sorts](github.com/browser-network/database) to enable truly serverless real
-time state updates. This could be used for something like a social network to
-great effect. It'd mean no intermediary between users and their data. Each user
-does some of the work of saving states and communicating on the network. The
-incentive to run the code is to use the app.
+sorts](//github.com/browser-network/database) to enable truly serverless real
+time state updates on the web. This could be used for something like a social
+network to great effect. It'd mean no intermediary between users and their
+data. Each user does some of the work of saving states and communicating on the
+network. The incentive to run the code is to use the app.
 
 Really anything that requires real time capabilities will work with this.
 What immediately comes to mind:
@@ -112,7 +112,7 @@ of the switching service is meant to be as small as possible.
 
 One service can handle multiple apps so you will probably not have to run one.
 However if you do want to run a switching service, a node.js implementation is
-available [here](github.com/browser-network/switchboard).
+available [here](//github.com/browser-network/switchboard).
 
 ## Installation
 
@@ -123,7 +123,7 @@ npm install @browser-network/network
 or
 
 ```html
-<script src="unpkg.com/@browser-network/network/umd/network.min.js"></script>
+<script src="//unpkg.com/@browser-network/network/umd/network.min.js"></script>
 ```
 
 ## Quick Start
@@ -136,15 +136,28 @@ messages in the browser console.
 
 <html lang="en">
   <body>
-    <script src="unpkg.com/@browser-network/network/umd/network.min.js"></script>
+    <script src="//unpkg.com/@browser-network/network/umd/network.min.js"></script>
     <script>
-      const network = new Network({
+
+      const network = window.network = new Network.Network({
         switchAddress: 'http://localhost:5678', // default address of switchboard
         clientId: crypto.randomUUID(), // arbitrary string
         networkId: 'test-network'
       })
 
       network.on('message', console.log)
+
+      let counter = 0
+      setInterval(() => {
+        counter += 1
+
+        network.broadcast({
+          type: 'amazing-hello-message',
+          data: 'This is message number ' + counter,
+          appId: 'my-cool-app-id'
+        })
+      }, 1000)
+
     </script>
   </body>
 </html>
@@ -169,7 +182,7 @@ and forth.
 
 ## Usage
 
-First up, instaniate a Network.
+First up, instantiate a Network.
 
 ```ts
 import Network from '@browser-network/network'
