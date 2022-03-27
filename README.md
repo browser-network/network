@@ -55,7 +55,7 @@ What immediately comes to mind:
   for both [Android](https://webrtc.github.io/webrtc-org/native-code/android/)
   and [iOS](https://webrtc.github.io/webrtc-org/native-code/ios/).
 
-* This library, when minified and gzipped, is ~5kb.
+* This library, when minified and gzipped, is only ~45kb.
 
 * If you do want full uptime and a similar user experience to an app with a server,
   you can just leave a browser window of your app open. Another way of saying this,
