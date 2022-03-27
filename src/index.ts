@@ -269,7 +269,7 @@ export class Network extends EventEmitter<Events> {
     if (!book) { return debug(1, 'got bad response from switchboard:', book) }
 
     for (const negotiation of book) {
-      switch(negotiation.type) {
+      switch (negotiation.type) {
         case 'offer': {
           const connection = await this.handleOffer(negotiation)
           if (!connection) { continue }
@@ -540,8 +540,9 @@ export class Network extends EventEmitter<Events> {
       this.handleMessage(message)
     })
 
+    peer.on('close', () => { this.destroyConnection(connection) })
+
     peer.on('end', () => { debug(5, 'p.on("end") fired for client', connection.clientId) })
-    peer.on('close', () => { debug(5, 'p.on("close") fired for client', connection.clientId) })
     peer.on('writable', () => { debug(5, 'p.on("writable") fired for client', connection.clientId) })
     peer.on('error', (err: any) => { debug(4, `p.on(error) handler for ${connection.clientId}:`, err) })
   }
@@ -575,7 +576,7 @@ export class Network extends EventEmitter<Events> {
     for (const connectionId in this._connections) {
       const connection = this._connections[connectionId]
       // const { clientId, peer: { readable, writable, destroyed, connected }} = connection
-      const { clientId, peer: { destroyed }} = connection
+      const { clientId, peer: { destroyed } } = connection
 
       // TODO Do something with `connected` here. Is it the same as channelName?
       // Sometimes peer gets into a state where it doesn't have a _channel
