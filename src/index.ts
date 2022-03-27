@@ -396,8 +396,8 @@ export class Network extends EventEmitter<Events> {
       !connection ||
       // Somebody else already got to this open connection
       connection.clientId ||
-      // The ip trying to connect is on our naughty list
-      this.isRude(getIpFromRTCSDP(answer.sdp)) ||
+      // The ip trying to connect is on our naughty list or not presenting an sdp string
+      !answer.sdp || this.isRude(getIpFromRTCSDP(answer.sdp)) ||
       // We've reached our max number of allowed connections
       this.connections().length >= this.config.maxConnections
     ) { return null }
@@ -420,8 +420,8 @@ export class Network extends EventEmitter<Events> {
       offer.clientId === this.clientId ||
       // We're are already connected to this client
       this.hasConnection(offer.clientId) ||
-      // They're on our rude list
-      this.isRude(getIpFromRTCSDP(offer.sdp)) ||
+      // They're on our rude list or not presenting an sdp string
+      !offer.sdp || this.isRude(getIpFromRTCSDP(offer.sdp)) ||
       // We have the max number of connections
       this.connections().length >= this.config.maxConnections
     ) { return null }
