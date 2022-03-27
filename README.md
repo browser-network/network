@@ -13,6 +13,8 @@ network. It uses WebRTC to connect directly from browser to browser.
 Every browser window connects to many others, creating a robust network
 through which messages can be sent.
 
+The goal of this project is to enable easy to use, truly serverless app development.
+
 The Network can be installed via
 [npm](//npmjs.org/package/@browser-network/network) or
 [cdn](//unpkg.com/@browser-network/network/umd/network.min.js) and dropped into
@@ -42,11 +44,13 @@ What immediately comes to mind:
   new connection with another node. The network internally gossips WebRTC
   handshake information to (re)establish connections with disconnected nodes.
 
-* The only external reliance is on a lightweight switching service
-  which has a small resource footprint.
+* The only external reliance is on a lightweight http only switching service
+  which has a small resource footprint. Note it does not rely on websockets,
+  just regular http requests.
 
-* This software can be run in both browsers and node.js (At the time of writing
-  this is untested. TODO test)
+* This software can theoretically be run in both browsers and node.js (At the time of writing
+  this is not the case, it is browser only, but should need only small updates to get
+  working in node. TODO)
 
 * This software defines a set of message protocols that can be used with any other
   webRTC enabled hardware. This means one network is not limited to having
@@ -281,6 +285,14 @@ TODO
 * Assess how much of our inter peer data could be represented with buffers
 * if a broadcast is made with a specific clientId, and we're connected to that clientId,
   just go ahead and send directly to that clientId instead of broadcasting to everyone.
-* Can we prevent channel name BS by specifying it manually a la https://github.com/feross/simple-peer#peer--new-peeropts?
 * Log message config param - toggle for whether to respect log messages. Might be
   a security vulnerability.
+* Bring cryptographic integrity into this project. Originally I was unsure of whether
+  it would be helpful because it doesn't prevent spam. If you got blocked somehow,
+  you could just change your priv key and boom you're a new user. Although now that
+  I write it out, I could see a reputation system working just fine about that.
+  Anyways there's another reason to bring it in - to prevent spoofing the clientId
+  of a message. Right now I can broadcast a message and put any clientId I'd like
+  on it. As far as network is currently concerned this is not an issue, you can't spoof
+  someone's sdp information. The worst you could do is confuse someone's connection pool.
+  Actually that's a low hanging DOS right there. So yeah, network needs cryptographic principles.
