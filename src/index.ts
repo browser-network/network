@@ -564,7 +564,7 @@ export class Network extends EventEmitter<Events> {
 
   private garbageCollectConnections() {
     // TODO we're keeping track of duplicate clients here so we can garbage collect them.
-    // But it'd be better if we weren't having duplicate clients at all. Let's work on that.
+    // But it'd be better if we weren't having duplicate clients at all.
     const seenClientIds = {}
 
     // The actual garbage collection action
@@ -575,23 +575,35 @@ export class Network extends EventEmitter<Events> {
 
     for (const connectionId in this._connections) {
       const connection = this._connections[connectionId]
-      // const { clientId, peer: { readable, writable, destroyed, connected }} = connection
       const { clientId, peer: { destroyed } } = connection
-
-      // TODO Do something with `connected` here. Is it the same as channelName?
-      // Sometimes peer gets into a state where it doesn't have a _channel
-      // (or channelName, which seems to coexist with _channel)
-      // but needs one to send
-      // // @ts-ignore
-      // const shouldBeCollected = (!readable || !writable || destroyed || !connection.peer.channelName)
-      // const shouldBeCollected = (!readable || !writable || destroyed)
-      const shouldBeCollected = destroyed
-      if (shouldBeCollected) { return collect(connection) }
+      if (destroyed) { return collect(connection) }
 
       // After we clean destroyed connections, let's make sure we don't have any duplicates.
-      // Sometimes there are race conditions.
-      if (seenClientIds[clientId]) { collect(connection) }
-      seenClientIds[clientId] = true
+      // Sometimes there are race conditions. The idea here is that if it wasn't destroyed,
+      // there's two valid connections, and we can remove one.
+      //
+      // Sometimes one window will have multiple connections pointing to
+      // the same neighbor and that neighbor will only have one. There's a difference in
+      // the two connections: One has a channelName and the other does not. If peer.channelName
+      // is null then that's the connection that should be removed. I think this is some race
+      // condition in SimplePeer. This will increase stability lots.
+      // Also I tried specifying manually the same channel name at Peer instantiation time,
+      // but that did not seem to have any effect.
+
+      // This reads "if we've seen this clientId already, assess if either of the connections
+      // have no channelName and remove it if it doesn't."
+      const seenConnectionId = seenClientIds[clientId]
+      if (seenConnectionId) {
+
+        // These two mean if either has no channelName, remove it.
+        if (connection.peer.channelName === null) {
+          return collect(connection)
+        }
+        if (this._connections[seenConnectionId].peer.channelName === null) {
+          return collect(connection)
+        }
+      }
+      seenClientIds[clientId] = connection.id
     }
   }
 
@@ -601,11 +613,7 @@ export class Network extends EventEmitter<Events> {
     peer.removeAllListeners()
     peer.end()
     peer.destroy()
-
-    // If an index was passed in, great, we can remove it from our pool. If
-    // not, GC will get it on its next pass.
     delete this._connections[connection.id]
-
     this.emit('destroy-connection', connection.id)
   }
 
