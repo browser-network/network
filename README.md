@@ -202,7 +202,7 @@ const network = new Network({
 })
 ```
 
-See the [network config docs](src/NetworkConfig.d.ts) for more info on the config object.
+See the [network config type](src/NetworkConfig.d.ts) for more info on the config object.
 
 ---
 
@@ -250,10 +250,22 @@ network.connections() // -> Connection[]
 
 See more about [the Connection type](src/Connection.d.ts)
 
+---
+
+Network also gives you the means to add ip addresses to a "rude list". If someone
+makes it onto your rude list, you don't connect with them any more. Currently a machine
+will automatically be included in the rude list if it sends more messages than
+`config.maxMessageRateBeforeRude` in any given second.
+
+```ts
+network.addToRudeList('<ip address>')
+network.isRude('<ip address>') // -> boolean
+```
+
 ## Building
 
-The best way to build your project, (and how this project builds its CDN
-exports), is with [Browserify](https://browserify.org/).
+The best way to build your project that uses this network, (and how this
+project builds its CDN exports), is with [Browserify](https://browserify.org/).
 
 See the [package.json](./package.json) for how this project builds for CDN vs
 ESM library style.

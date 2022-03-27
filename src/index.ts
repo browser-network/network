@@ -154,6 +154,34 @@ export class Network extends EventEmitter<Events> {
     return Object.values(this._connections)
   }
 
+  // Given an offer/answer, do we have this person on our rude list.
+  // Makes it easy to tell whether we
+  isRude(ip: t.IPAddress): boolean {
+    return !!this.rudeIps[ip]
+  }
+
+  // Add an ip to a rude list, which means we won't connect to then any more.
+  // If an optional clientId is provided, and we're connected to that clientId,
+  // we'll drop them as well.
+  addToRudeList(ip: t.IPAddress, clientId?: t.ClientId) {
+    this.rudeIps[ip] = Date.now()
+
+    debug(1, 'added to rude list:', ip, clientId)
+
+    // We can check and make sure we're aren't / don't stay connected to this person
+    if (clientId) {
+      const connection = this.getConnectionByClientId(clientId)
+      if (!connection) { return }
+      this.broadcast({
+        type: 'log',
+        appId: APP_ID,
+        data: 'rude',
+        destination: clientId
+      })
+      this.destroyConnection(connection)
+    }
+  }
+
   // Safely start it
   private startOfferBroadcastInterval() {
     if (this._offerBroadcastInterval) { return }
@@ -294,7 +322,6 @@ export class Network extends EventEmitter<Events> {
 
     debug(5, 'handleMessage:', message)
 
-
     // We are only interested in our own application here.
     // The network is actually an application on the network, lolz.
     // Note we're using 'massage' here only so typescript knows
@@ -370,7 +397,7 @@ export class Network extends EventEmitter<Events> {
       // Somebody else already got to this open connection
       connection.clientId ||
       // The ip trying to connect is on our naughty list
-      this.isRude(answer) ||
+      this.isRude(getIpFromRTCSDP(answer.sdp)) ||
       // We've reached our max number of allowed connections
       this.connections().length >= this.config.maxConnections
     ) { return null }
@@ -394,7 +421,7 @@ export class Network extends EventEmitter<Events> {
       // We're are already connected to this client
       this.hasConnection(offer.clientId) ||
       // They're on our rude list
-      this.isRude(offer) ||
+      this.isRude(getIpFromRTCSDP(offer.sdp)) ||
       // We have the max number of connections
       this.connections().length >= this.config.maxConnections
     ) { return null }
@@ -650,31 +677,5 @@ export class Network extends EventEmitter<Events> {
     }
 
     return oc
-  }
-
-  private isRude(negotiation: t.Negotiation): boolean {
-    // if the negotiation doesn't even have an sdp on it then yes, it is rude
-    if (!negotiation.sdp) { return true }
-    const ip = getIpFromRTCSDP(negotiation.sdp)
-    return !!this.rudeIps[ip]
-  }
-
-  private addToRudeList(ip: t.IPAddress, clientId?: t.ClientId) {
-    this.rudeIps[ip] = Date.now()
-
-    debug(1, 'added to rude list:', ip, clientId)
-
-    // We can check and make sure we're aren't / don't stay connected to this person
-    if (clientId) {
-      const connection = this.getConnectionByClientId(clientId)
-      if (!connection) { return }
-      this.broadcast({
-        type: 'log',
-        appId: APP_ID,
-        data: 'rude',
-        destination: clientId
-      })
-      this.destroyConnection(connection)
-    }
   }
 }

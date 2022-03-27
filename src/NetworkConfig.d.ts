@@ -1,4 +1,5 @@
-// Below are the types for the network config object.
+// Below are the types for the network config object, that which is passed
+// in as `config` to new Network(...)
 
 export type NetworkConfig = {
   // How often to broadcast our offer message to the network.
