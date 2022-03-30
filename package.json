@@ -40,13 +40,11 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "simple-peer": "^9.11.1",
-    "uuid": "^8.3.2"
+    "simple-peer": "^9.11.1"
   },
   "devDependencies": {
     "@types/node": "^13.9.0",
     "@types/simple-peer": "^9.11.4",
-    "@types/uuid": "^8.3.4",
     "browserify": "^17.0.0",
     "nodemon": "^2.0.15",
     "np": "^7.6.0",

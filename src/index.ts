@@ -1,5 +1,4 @@
 import Peer from 'simple-peer'
-import { v4 as uuid } from 'uuid'
 
 import * as t from './types.d'
 import * as Mes from './Message.d'
@@ -8,7 +7,7 @@ import { Repeater } from './Repeater'
 import EventEmitter from './EventEmitter'
 import BehaviorCache from './BehaviorCache'
 import { NetworkConfig } from './NetworkConfig.d'
-import { Connection } from './Connection.d'
+import { Connection, PendingConnection } from './Connection.d'
 
 export type Message = Mes.Message
 
@@ -71,7 +70,7 @@ type NetworkProps = {
 // })
 type Events = {
   'switchboard-response': t.SwitchboardBook
-  'add-connection': Connection
+  'add-connection':  PendingConnection | Connection
   'destroy-connection': Connection['id']
   'broadcast-message': Mes.Message
   'message': { appId: string, message: Mes.Message }
@@ -86,7 +85,7 @@ export class Network extends EventEmitter<Events> {
   rudeIps: { [address: t.IPAddress]: t.TimeStamp } = {}
   behaviorCache: BehaviorCache
 
-  _connections: { [connectionId: t.GUID]: Connection } = {}
+  _connections: { [connectionId: t.GUID]: PendingConnection | Connection } = {}
   _seenMessageIds: { [id: t.GUID]: t.TimeStamp } = {}
 
   _switchboardVolunteerDelayTimeout: ReturnType<typeof setInterval>
@@ -136,7 +135,7 @@ export class Network extends EventEmitter<Events> {
     // TODO require: data, appId, type
 
     // We forbid id and clientId from being passed in.
-    message.id = uuid() as string
+    message.id = crypto.randomUUID() as string
     message.clientId = this.clientId
     type MessageSoFar = typeof message & { id: string, clientId: string }
 
@@ -150,7 +149,7 @@ export class Network extends EventEmitter<Events> {
   }
 
   // List of all our current connections
-  connections(): Connection[] {
+  connections(): (PendingConnection | Connection)[] {
     return Object.values(this._connections)
   }
 
@@ -218,8 +217,11 @@ export class Network extends EventEmitter<Events> {
     // TODO make helpers for this
     this._seenMessageIds[message.id] = Date.now()
 
-    for (const connectionId in this._connections) {
-      const connection = this._connections[connectionId]
+    for (const connection of this.connections()) {
+      // This means this is a pending connection, we don't want to send
+      // anything over that.
+      if (!connection.negotiation.sdp) return
+
       this.send(connection, message)
     }
 
@@ -237,7 +239,7 @@ export class Network extends EventEmitter<Events> {
     this.switchboardRequester.begin()
     // TODO this is _alright_ but not great.
     this.broadcastMessage({
-      id: uuid(),
+      id: crypto.randomUUID(),
       appId: APP_ID,
       type: 'switchboard-volunteer',
       destination: '*',
@@ -250,14 +252,17 @@ export class Network extends EventEmitter<Events> {
   async doSwitchboardRequest() {
     debug(5, 'doSwitchboardRequest')
 
-    const existingConnection = await this.getOrGenerateOpenConnection()
+    const existingConnection = this.getOrGenerateOpenConnection()
+
+    // We don't want to send switchboard requests for PendingConnections
+    if (!existingConnection.negotiation.sdp) return
 
     // Send our offer to switch
     const resp = await this.sendNegotiationToSwitchingService({
       clientId: this.clientId,
       networkId: this.networkId,
       connectionId: existingConnection.id,
-      ...existingConnection.negotiation
+      ...(existingConnection.negotiation as t.Negotiation)
     })
 
     this.handleSwitchboardResponse(resp)
@@ -271,15 +276,26 @@ export class Network extends EventEmitter<Events> {
     for (const negotiation of book) {
       switch (negotiation.type) {
         case 'offer': {
-          const connection = await this.handleOffer(negotiation)
+          const connection = this.handleOffer(negotiation)
           if (!connection) { continue }
 
-          this.sendNegotiationToSwitchingService({
-            connectionId: connection.id,
-            timestamp: Date.now(),
-            networkId: this.networkId,
-            ...connection.negotiation
-          })
+          // TODO Factor this right on out of here. Connection should be a class
+          // that emits an event when the sdp info is ready, among other things.
+          const interval = setInterval(() => {
+            // We are just gonna keep trying until the sdp has come through, which comes a little
+            // bit after the connection is initially formed.
+            if (!connection.negotiation.sdp) return
+
+            this.sendNegotiationToSwitchingService({
+              connectionId: connection.id,
+              timestamp: Date.now(),
+              networkId: this.networkId,
+              ...(connection.negotiation as t.Negotiation)
+            })
+
+            // we only want to do this once.
+            clearInterval(interval)
+          }, 300)
 
           break
         }
@@ -344,21 +360,28 @@ export class Network extends EventEmitter<Events> {
     this.emit('message', { appId: message.appId, message })
   }
 
-  private async handleOfferMessage(message: Mes.OfferMessage) {
-    const connection = await this.handleOffer(message.data)
+  private handleOfferMessage(message: Mes.OfferMessage) {
+    const connection = this.handleOffer(message.data)
     if (!connection) { return }
 
-    this.broadcastMessage({
-      ...connection.negotiation,
-      appId: APP_ID,
-      id: uuid(),
-      ttl: 6,
-      clientId: this.clientId,
-      destination: message.clientId,
-      data: {
-        connectionId: message.data.connectionId,
-      }
-    })
+    const interval = setInterval(() => {
+      if (!connection.negotiation.sdp) return
+
+      this.broadcastMessage({
+        ...connection.negotiation,
+        appId: APP_ID,
+        id: crypto.randomUUID(),
+        ttl: 6,
+        clientId: this.clientId,
+        destination: message.clientId,
+        data: {
+          connectionId: message.data.connectionId,
+        }
+      })
+
+      clearInterval(interval)
+    }, 300)
+
   }
 
   private handleAnswerMessage(message: Mes.AnswerMessage) {
@@ -384,7 +407,7 @@ export class Network extends EventEmitter<Events> {
     this._switchboardVolunteerDelayTimeout = setTimeout(this.beginSwitchboardRequestPeriod.bind(this), SWITCHBOARD_BACKOFF_DURATION + Math.random() * 1000)
   }
 
-  // handleAnswer assumes it's getting an answer for our open offer.
+  // handleAnswer assumes it's getting an answer for an open offer of ours.
   private handleAnswer(answer: t.Answer): void {
     const connection = this._connections[answer.connectionId]
 
@@ -411,7 +434,7 @@ export class Network extends EventEmitter<Events> {
     this.signal(connection.peer, answer)
   }
 
-  private async handleOffer(offer: t.Offer): Promise<Connection | null> {
+  private handleOffer(offer: t.Offer): PendingConnection | null {
     // We're only concerned with offers from others
     // we're not already connected to, who are not on
     // our rude list, and if we aren't already maxed out.
@@ -431,64 +454,64 @@ export class Network extends EventEmitter<Events> {
 
     // Generate the answer response to peer's answer (new peer object)
     // Always will be present b/c it's new
-    const connection = await this.generateAnswerConnection(offer)
+    const connection = this.generateAnswerConnection(offer)
     this.addConnection(connection, offer.clientId)
 
     return connection
   }
 
-  // Ok, these two right now have significant side effects. Smells bad.
-  private async generateOfferConnection(): Promise<Connection> {
+  private generateOfferConnection(): PendingConnection {
     const peer = new Peer({ initiator: true, trickle: false })
 
-    return new Promise(resolve => {
-      peer.on('signal', async data => {
-        if (data.type === 'offer') {
-          const id = uuid()
-          resolve({
-            id,
-            peer,
-            negotiation: {
-              clientId: this.clientId,
-              type: 'offer',
-              sdp: (data as t.RTCOffer).sdp,
-              connectionId: id,
-              networkId: this.networkId,
-              timestamp: Date.now()
-            }
-          })
-        }
-      })
+    const id = crypto.randomUUID()
+
+    const negotiation: t.Offer & { sdp: null } = {
+      type: 'offer',
+      clientId: this.clientId,
+      connectionId: id,
+      sdp: null,
+      networkId: this.networkId,
+      timestamp: Date.now()
+    }
+
+    const pendingConnection = { id, peer, negotiation }
+
+    peer.on('signal', data => {
+      if (data.type === 'offer') {
+        pendingConnection.negotiation.sdp = (data as t.RTCOffer).sdp
+      }
     })
+
+    return pendingConnection
   }
 
-  private async generateAnswerConnection(offer: t.Offer): Promise<Connection> {
+  private generateAnswerConnection(offer: t.Offer): PendingConnection {
     debug(5, 'generateAnswerConnection called for offer:', offer.clientId, offer.connectionId)
 
     const peer = new Peer({ initiator: false, trickle: false })
 
-    return new Promise(resolve => {
-      peer.on('signal', async data => {
-        // Resolve with a new Connection object
-        if (data.type === 'answer') resolve({
-          id: uuid(),
-          peer,
-          negotiation: {
-            clientId: this.clientId,
-            type: 'answer',
-            sdp: (data as t.RTCAnswer).sdp,
-            connectionId: offer.connectionId,
-            networkId: this.networkId,
-            timestamp: Date.now()
-          }
+    const negotiation: t.Answer & { sdp: null } = {
+      type: 'answer',
+      clientId: this.clientId,
+      connectionId: offer.connectionId,
+      sdp: null,
+      networkId: this.networkId,
+      timestamp: Date.now()
+    }
 
-        })
-      })
-      this.signal(peer, offer)
+    const pendingConnection = { id: crypto.randomUUID(), peer, negotiation }
+
+    peer.on('signal', data => {
+      if (data.type === 'answer') {
+        pendingConnection.negotiation.sdp = (data as t.RTCAnswer).sdp
+      }
     })
+    this.signal(peer, offer)
+
+    return pendingConnection
   }
 
-  private addConnection(connection: Connection, clientId?: t.ClientId) {
+  private addConnection(connection: PendingConnection, clientId?: t.ClientId) {
     // This always needs to happen when we add the connection to our pool,
     // lest we're adding an offer.
     connection.clientId = clientId
@@ -499,7 +522,7 @@ export class Network extends EventEmitter<Events> {
     this.emit('add-connection', connection)
   }
 
-  private registerRTCEventHandlers(connection: Connection) {
+  private registerRTCEventHandlers(connection: Connection | PendingConnection) {
     const { peer } = connection
     peer.on('connect', () => {
       debug(2, 'CONNECT', connection.clientId)
@@ -509,7 +532,7 @@ export class Network extends EventEmitter<Events> {
         type: 'log',
         clientId: this.clientId,
         appId: APP_ID,
-        id: uuid(),
+        id: crypto.randomUUID(),
         ttl: 1,
         destination: connection.clientId,
         data: {
@@ -521,7 +544,7 @@ export class Network extends EventEmitter<Events> {
     peer.on('data', (data: Uint8Array) => {
       const { clientId, negotiation } = connection
 
-      const peerAddress = getIpFromRTCSDP(negotiation.sdp)
+      const peerAddress = getIpFromRTCSDP((negotiation as t.Negotiation).sdp)
       debug(5, 'got message from:', peerAddress, clientId)
 
       // Ensure the machine on the other end of this connection is behaving themselves
@@ -568,15 +591,17 @@ export class Network extends EventEmitter<Events> {
     const seenClientIds = {}
 
     // The actual garbage collection action
-    const collect = (connection: Connection) => {
-      debug(5, 'garbage collect peer:', connection.clientId)
+    const collect = (connection: PendingConnection | Connection) => {
+      debug(5, 'garbage collect connection:', connection)
       this.destroyConnection(connection)
     }
 
     for (const connectionId in this._connections) {
       const connection = this._connections[connectionId]
       const { clientId, peer: { destroyed } } = connection
-      if (destroyed) { return collect(connection) }
+      if (destroyed) {
+        return collect(connection)
+      }
 
       // After we clean destroyed connections, let's make sure we don't have any duplicates.
       // Sometimes there are race conditions. The idea here is that if it wasn't destroyed,
@@ -600,14 +625,14 @@ export class Network extends EventEmitter<Events> {
           return collect(connection)
         }
         if (this._connections[seenConnectionId].peer.channelName === null) {
-          return collect(connection)
+          return collect(this._connections[seenConnectionId])
         }
       }
       seenClientIds[clientId] = connection.id
     }
   }
 
-  private destroyConnection(connection: Connection) {
+  private destroyConnection(connection: PendingConnection | Connection) {
     debug(4, 'destroying connection', connection.clientId)
     const { peer } = connection
     peer.removeAllListeners()
@@ -620,13 +645,15 @@ export class Network extends EventEmitter<Events> {
   // Send message to a specific connection
   private send(connection: Connection, message: Mes.Message) {
     try {
-      // TODO maybe adding conditions on the write here will help avoid the mega queue
-      // that happens in the beginning sometimes. Check to see if it's writable.
-      // B/c I think webrtc is queuing up messages. So We connect and immediately I send
-      // over the last 10 offers I have queued up. Maybe there's a race condition there.
-      // So if I only write here when the socket is writable, maybe I can avoid that sitch.
-      // UPDATE apparently that's the difference between write and send. Write queues, send
-      // throws if it's not writable yet.
+      // The difference between write and send is that write queues, send
+      // throws if it's not writable yet. Previously there was a race
+      // condition here leading to many initial connections when
+      // using write. Once we removed the asynchronicity from connection
+      // creation, that race condition went away and we're free to use .write
+      // again. However, ephemerality is built into the network, so it's understood
+      // that messages won't always make it. With our rudeness checking on, maybe
+      // it's best not to queue up messages before sending, and just send when
+      // we're connected.
       // connection.peer.write(JSON.stringify(message))
       if (!connection.peer.connected) { return }
       connection.peer.send(JSON.stringify(message))
@@ -647,10 +674,10 @@ export class Network extends EventEmitter<Events> {
   }
 
   private async broadcastOffer() {
-    const openConnection = await this.getOrGenerateOpenConnection()
+    const openConnection = this.getOrGenerateOpenConnection()
 
     const offer: Mes.OfferMessage = {
-      id: uuid(),
+      id: crypto.randomUUID(),
       ttl: 6,
       type: 'offer',
       clientId: this.clientId,
@@ -670,18 +697,18 @@ export class Network extends EventEmitter<Events> {
     return !!this.getConnectionByClientId(clientId)
   }
 
-  private getConnectionByClientId(clientId: t.ClientId): Connection | undefined {
+  private getConnectionByClientId(clientId: t.ClientId): PendingConnection | Connection | undefined {
     return this.connections().find(con => con.clientId === clientId)
   }
 
   // If we have an open connection in the pool, return that.
   // Otherwise, generate an open connection.
-  private async getOrGenerateOpenConnection(): Promise<Connection> {
+  private getOrGenerateOpenConnection(): PendingConnection | Connection {
     // return this.connections().find(con => con.negotiation.type === 'offer') // TODO
     // let oc = this.connections().find(con => !con.peer.connected) // TODO
     let oc = this.connections().find(con => !con.clientId) // TODO
     if (!oc) {
-      oc = await this.generateOfferConnection()
+      oc = this.generateOfferConnection()
       this.addConnection(oc)
     }
 

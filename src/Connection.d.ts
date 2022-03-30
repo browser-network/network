@@ -23,4 +23,12 @@ export type Connection = {
   negotiation: Negotiation
 }
 
-
+// This is a connection before the sdp information has come through. This type will
+// exist for a few seconds at the beginning of each connection, before the peer.on('signal')
+// event is fired.
+export type PendingConnection = {
+  id: t.GUID
+  clientId?: t.ClientId
+  peer: Peer.Instance
+  negotiation: Negotiation & { sdp: null }
+}
