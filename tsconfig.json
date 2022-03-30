@@ -4,7 +4,7 @@
     "allowUnusedLabels": false,
     "declaration": true,
     "forceConsistentCasingInFileNames": true,
-    "lib": ["es5", "es6", "dom"],
+    "lib": ["es6"],
     "noFallthroughCasesInSwitch": true,
     "pretty": true,
     "sourceMap": false,

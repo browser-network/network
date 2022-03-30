@@ -9,6 +9,7 @@
     "umd/**/*"
   ],
   "scripts": {
+    "test": "ts-node test/index.ts",
     "clean": "shx rm -rf dist build umd; shx mkdir umd",
     "compile:ts": "tsc",
     "compile:pack": "browserify dist/src/index.js -o umd/network.js -s Network",
@@ -40,11 +41,16 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "simple-peer": "^9.11.1"
+    "axios": "^0.26.1",
+    "simple-peer": "^9.11.1",
+    "uuid": "^8.3.2",
+    "wrtc": "^0.4.7"
   },
   "devDependencies": {
-    "@types/node": "^13.9.0",
+    "@mapbox/node-pre-gyp": "^1.0.9",
+    "@types/node": "^16",
     "@types/simple-peer": "^9.11.4",
+    "@types/uuid": "^8.3.4",
     "browserify": "^17.0.0",
     "nodemon": "^2.0.15",
     "np": "^7.6.0",

@@ -48,23 +48,21 @@ What immediately comes to mind:
   which has a small resource footprint. Note it does not rely on websockets,
   just regular http requests.
 
-* This software can theoretically be run in both browsers and node.js (At the time of writing
-  this is not the case, it is browser only, but should need only small updates to get
-  working in node. TODO)
+* This software can be run in both browsers and in node.js. That means you can
+  have a permanent network node set up somewhere headless in a node.js process.
 
 * This software defines a set of message protocols that can be used with any other
   webRTC enabled hardware. This means one network is not limited to having
-  browsers only - [phones implement webRTC in
+  browsers and node.js instances only - [phones implement webRTC in
   browsers](https://caniuse.com/?search=webrtc), and webRTC is enabled natively
   for both [Android](https://webrtc.github.io/webrtc-org/native-code/android/)
   and [iOS](https://webrtc.github.io/webrtc-org/native-code/ios/).
 
-* This library, when minified and gzipped, is only ~45kb.
-
 * If you do want full uptime and a similar user experience to an app with a server,
   you can just leave a browser window of your app open. Another way of saying this,
   is the only programming you have to do to have a real server is opening up a
-  browser window :P
+  browser window :P Note that if you wish to do _slightly more programming_, you can
+  also run a node.js node with the same `networkId`.
 
 ### How it works
 
@@ -268,8 +266,9 @@ network.isRude('<ip address>') // -> boolean
 
 ## Building
 
-The best way to build your project that uses this network, (and how this
-project builds its CDN exports), is with [Browserify](https://browserify.org/).
+If you're building with this project for the browser, the best way to build
+your project, (and how this project builds its CDN exports), is with
+[Browserify](https://browserify.org/).
 
 See the [package.json](./package.json) for how this project builds for CDN vs
 ESM library style.
@@ -279,8 +278,6 @@ TODO
 * Conditional messaging - a preflight is sent before sending a bigger message
   asking if a node wants to accept it. A broken boundary is rude.
 * Tunable involvement parameters - allow network / disc usage to be modulated
-* Right now multiple connections with a single peer can happen I think due to a race
-  somewhere in the open offer / answer negotiation.
 * Get rid of terrible custom debug implementation.
 * Assess how much of our inter peer data could be represented with buffers
 * if a broadcast is made with a specific clientId, and we're connected to that clientId,

@@ -1,4 +1,9 @@
 import Peer from 'simple-peer'
+import axios from 'axios'
+
+// Tried using crypto.randomUUID() but browserify like 10x's the build
+// size to do it.
+import { v4 as uuid } from 'uuid'
 
 import * as t from './types.d'
 import * as Mes from './Message.d'
@@ -12,6 +17,8 @@ import { Connection, PendingConnection } from './Connection.d'
 export type Message = Mes.Message
 
 const debug = debugFactory('Network')
+
+const IS_NODE = typeof process !== 'undefined'
 
 // Every app, even including this network, needs a unique id to identify
 // messages coming over the network. The only constraint is that you
@@ -135,7 +142,7 @@ export class Network extends EventEmitter<Events> {
     // TODO require: data, appId, type
 
     // We forbid id and clientId from being passed in.
-    message.id = crypto.randomUUID() as string
+    message.id = uuid() as string
     message.clientId = this.clientId
     type MessageSoFar = typeof message & { id: string, clientId: string }
 
@@ -239,7 +246,7 @@ export class Network extends EventEmitter<Events> {
     this.switchboardRequester.begin()
     // TODO this is _alright_ but not great.
     this.broadcastMessage({
-      id: crypto.randomUUID(),
+      id: uuid(),
       appId: APP_ID,
       type: 'switchboard-volunteer',
       destination: '*',
@@ -314,15 +321,8 @@ export class Network extends EventEmitter<Events> {
   // TODO Pull this off the proto
   private async sendNegotiationToSwitchingService(negotiation: t.Negotiation): Promise<t.SwitchboardResponse> {
     try {
-      const res = await fetch(this.switchAddress, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(negotiation),
-        cache: 'no-cache',
-        mode: 'cors',
-        credentials: 'omit'
-      })
-      return res.json()
+      const res = await axios.post(this.switchAddress, negotiation)
+      return res.data
     } catch (e) {
       debug(4, 'error w/ switch:', e)
     }
@@ -370,7 +370,7 @@ export class Network extends EventEmitter<Events> {
       this.broadcastMessage({
         ...connection.negotiation,
         appId: APP_ID,
-        id: crypto.randomUUID(),
+        id: uuid(),
         ttl: 6,
         clientId: this.clientId,
         destination: message.clientId,
@@ -461,9 +461,9 @@ export class Network extends EventEmitter<Events> {
   }
 
   private generateOfferConnection(): PendingConnection {
-    const peer = new Peer({ initiator: true, trickle: false })
+    const peer = new Peer({ initiator: true, trickle: false, wrtc: IS_NODE ? require('wrtc') : undefined })
 
-    const id = crypto.randomUUID()
+    const id = uuid()
 
     const negotiation: t.Offer & { sdp: null } = {
       type: 'offer',
@@ -488,7 +488,7 @@ export class Network extends EventEmitter<Events> {
   private generateAnswerConnection(offer: t.Offer): PendingConnection {
     debug(5, 'generateAnswerConnection called for offer:', offer.clientId, offer.connectionId)
 
-    const peer = new Peer({ initiator: false, trickle: false })
+    const peer = new Peer({ initiator: false, trickle: false, wrtc: IS_NODE ? require('wrtc') : undefined })
 
     const negotiation: t.Answer & { sdp: null } = {
       type: 'answer',
@@ -499,7 +499,7 @@ export class Network extends EventEmitter<Events> {
       timestamp: Date.now()
     }
 
-    const pendingConnection = { id: crypto.randomUUID(), peer, negotiation }
+    const pendingConnection = { id: uuid(), peer, negotiation }
 
     peer.on('signal', data => {
       if (data.type === 'answer') {
@@ -532,7 +532,7 @@ export class Network extends EventEmitter<Events> {
         type: 'log',
         clientId: this.clientId,
         appId: APP_ID,
-        id: crypto.randomUUID(),
+        id: uuid(),
         ttl: 1,
         destination: connection.clientId,
         data: {
@@ -607,7 +607,7 @@ export class Network extends EventEmitter<Events> {
       // Sometimes there are race conditions. The idea here is that if it wasn't destroyed,
       // there's two valid connections, and we can remove one.
       //
-      // Sometimes one window will have multiple connections pointing to
+      // Sometimes one node will have multiple connections pointing to
       // the same neighbor and that neighbor will only have one. There's a difference in
       // the two connections: One has a channelName and the other does not. If peer.channelName
       // is null then that's the connection that should be removed. I think this is some race
@@ -677,7 +677,7 @@ export class Network extends EventEmitter<Events> {
     const openConnection = this.getOrGenerateOpenConnection()
 
     const offer: Mes.OfferMessage = {
-      id: crypto.randomUUID(),
+      id: uuid(),
       ttl: 6,
       type: 'offer',
       clientId: this.clientId,
