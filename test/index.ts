@@ -1,35 +1,31 @@
 import { Network } from '../src'
 import crypto from 'crypto'
+import test from 'tape'
 
-const INITIALIZATION_WAIT_TIME = 1 * 1000
+const INITIALIZATION_WAIT_TIME = 30 * 1000
 const NUM_CONNECTIONS = 5
 
 const networks: Network[] = []
 
+const networkId = crypto.randomUUID()
+
+let numReceivedMessages = 0
+
 for (let i = 0; i < NUM_CONNECTIONS; i++) {
-  networks.push(new Network({
+  const network = new Network({
     switchAddress: 'http://localhost:5678',
-    networkId: 'test-network',
+    networkId: networkId,
     clientId: crypto.randomUUID()
-  }))
+  })
+
+  network.on('message', () => {
+    numReceivedMessages++
+  })
+
+  networks.push(network)
 }
 
-// Logging more than one is just too much
-networks[0].on('message', ({ appId, message }) => {
-  console.log(appId, message)
-})
-
-networks[0].on('add-connection', (con) => {
-  console.log('added connection:', con.clientId)
-})
-
-networks[0].on('switchboard-response', (book) => {
-  console.log('switchboard-response book.length:', book.length)
-})
-
-// TODO This doesn't work either, as in, a browser window does
-// not hear the close event
-process.on('SIGINT', (...args) => {
+const clean = (networks: Network[]) => {
   networks.forEach(n => {
     n.connections().forEach(c => {
       c.peer.removeAllListeners()
@@ -38,9 +34,12 @@ process.on('SIGINT', (...args) => {
     })
   })
 
-  console.log('SIGINT:', ...args)
-
   process.exit()
+}
+
+process.on('SIGINT', (...args) => {
+  console.log('SIGINT:', ...args)
+  clean(networks)
 })
 
 const checkConnections = (networks: Network[]): boolean => {
@@ -48,25 +47,34 @@ const checkConnections = (networks: Network[]): boolean => {
   return network.connections().length >= NUM_CONNECTIONS
 }
 
-// TODO this does not work
+const checkMessages = (): boolean => {
+  return numReceivedMessages > 0
+}
+
 const numIterations = INITIALIZATION_WAIT_TIME / 1000
 let i = 0
 const values: { [test: string]: boolean } = {}
-const interval = setInterval(() => {
-  values.checkConnections = checkConnections(networks)
+test('the thing', t => {
+  const interval = setInterval(() => {
+    values.checkConnections = checkConnections(networks)
+    values.checkMessages = checkMessages()
 
-  if (Object.values(values).every(b => b)) {
-    console.log('passed!')
-    clearInterval(interval)
-  }
+    console.log('checked, values:', values, networks[0].connections().map(c => [c.clientId, c.peer.connected]))
 
-  if (i >= numIterations) {
-    // We've surpassed our wait time
-    clearInterval(interval)
-
-    if (Object.values(values).some(b => !b)) {
-      console.log('failed')
+    if (Object.values(values).every(v => v)) {
+      clearInterval(interval)
+      t.pass()
+      t.end()
+      clean(networks)
     }
-  }
 
-}, INITIALIZATION_WAIT_TIME)
+    if (i >= numIterations) {
+      // We've surpassed our wait time
+      clearInterval(interval)
+      t.fail('not all values are true')
+      clean(networks)
+    }
+
+    i++
+  }, 1000)
+})

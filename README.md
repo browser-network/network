@@ -49,7 +49,8 @@ What immediately comes to mind:
   just regular http requests.
 
 * This software can be run in both browsers and in node.js. That means you can
-  have a permanent network node set up somewhere headless in a node.js process.
+  have a permanent network node set up somewhere headless in a node.js process
+  if you want.
 
 * This software defines a set of message protocols that can be used with any other
   webRTC enabled hardware. This means one network is not limited to having
