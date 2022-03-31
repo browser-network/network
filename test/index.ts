@@ -2,7 +2,7 @@ import { Network } from '../src'
 import crypto from 'crypto'
 import test from 'tape'
 
-const INITIALIZATION_WAIT_TIME = 30 * 1000
+const TIME_LIMIT = 30 * 1000
 const NUM_CONNECTIONS = 5
 
 const networks: Network[] = []
@@ -51,15 +51,25 @@ const checkMessages = (): boolean => {
   return numReceivedMessages > 0
 }
 
-const numIterations = INITIALIZATION_WAIT_TIME / 1000
+const numIterations = TIME_LIMIT / 1000
 let i = 0
 const values: { [test: string]: boolean } = {}
-test('the thing', t => {
+test(`${NUM_CONNECTIONS} connections, ${TIME_LIMIT / 1000} second limit`, t => {
+
+  // We'll handle our own timing out
+  t.timeoutAfter(1000 * 60 * 60 * 24) // will we ever need longer than a day?
+
   const interval = setInterval(() => {
     values.checkConnections = checkConnections(networks)
     values.checkMessages = checkMessages()
 
-    console.log('checked, values:', values, networks[0].connections().map(c => [c.clientId, c.peer.connected]))
+    console.log('checked, values:', values, networks[0].connections().map(c => {
+      return {
+        clientId: c.clientId,
+        connected: c.peer.connected,
+        sdp: c.negotiation.sdp?.slice(0, 10)
+      }
+    }))
 
     if (Object.values(values).every(v => v)) {
       clearInterval(interval)

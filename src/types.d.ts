@@ -31,9 +31,12 @@ export type NegotiationCommon = {
   timestamp: t.TimeStamp
 }
 
-export type Offer = { type: 'offer' } & NegotiationCommon
-export type Answer = { type: 'answer' } & NegotiationCommon
-export type Negotiation = Offer | Answer
+export type OfferNegotiation = { type: 'offer' } & NegotiationCommon
+export type AnswerNegotiation = { type: 'answer' } & NegotiationCommon
+export type Negotiation = OfferNegotiation | AnswerNegotiation
+
+// Briefly b/t Connection instantiation & 'signal' event
+export type PendingNegotiation = Negotiation & { sdp: null }
 
 export type SwitchboardBook = Negotiation[]
 export type SwitchboardResponse = SwitchboardBook | null
