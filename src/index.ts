@@ -93,21 +93,21 @@ export class Network extends TypedEventEmitter<Events> {
   _connections: { [connectionId: t.GUID]: Connection } = {}
   _seenMessageIds: { [id: t.GUID]: t.TimeStamp } = {}
 
-  _switchboardVolunteerDelayTimeout: ReturnType<typeof setInterval>
+  _switchboardVolunteerDelayTimeout: ReturnType<typeof setTimeout>
   _offerBroadcastInterval: ReturnType<typeof setInterval>
   _garbageCollectInterval: ReturnType<typeof setInterval>
 
   constructor({ switchAddress, networkId, clientId, config = {} }: NetworkProps) {
     super()
 
-    this.config = Object.assign(config, {
+    this.config = Object.assign({
       offerBroadcastInterval: 1000 * 5,
       switchboardRequestInterval: 1000 * 3,
       garbageCollectInterval: 1000 * 5,
       respectSwitchboardVolunteerMessages: true,
       maxMessageRateBeforeRude: 100,
       maxConnections: 10
-    })
+    }, config)
 
     this.switchAddress = switchAddress
     this.networkId = networkId
@@ -132,6 +132,29 @@ export class Network extends TypedEventEmitter<Events> {
     // how many messages will we tolerate within a one second period from
     // a specific IP address before we consider that machine to be a rude fella.
     this.behaviorCache = new BehaviorCache(this.config.maxMessageRateBeforeRude)
+  }
+
+  // TODO the peer.destroy() here throws a SIGSEGV in node (discovered while making
+  // test suite).
+  // Stop all listeners, intervals, and connections, so that a process running a network
+  // can gracefully stop its own process.
+  teardown() {
+    this.switchboardRequester.stop()
+    this.stopOfferBroadcastInterval()
+    this.stopGarbageCollectionInterval()
+    clearTimeout(this._switchboardVolunteerDelayTimeout)
+
+    for (let c of this.connections()) {
+      c.peer.removeAllListeners()
+      c.peer.end()
+      c.peer.destroy()
+    }
+
+    for (let conId in this._connections) {
+      delete this._connections[conId]
+    }
+
+    this.off()
   }
 
   // The primary means of sending a message into the network for an application.
@@ -189,14 +212,16 @@ export class Network extends TypedEventEmitter<Events> {
   // Safely start it
   private startOfferBroadcastInterval() {
     if (this._offerBroadcastInterval) { return }
-    this._offerBroadcastInterval = setInterval(this.broadcastOffer.bind(this), this.config.offerBroadcastInterval)
+    this._offerBroadcastInterval = setInterval(() => {
+      const openCon = this.getOrGenerateOpenConnection()
+      if (openCon.negotiation.sdp) this.broadcastOffer()
+    }, this.config.offerBroadcastInterval)
   }
 
-  // // Temporarily removed but kept for safe keeping
-  // private stopOfferBroadcastInterval() {
-  //   clearInterval(this._offerBroadcastInterval)
-  //   delete this._offerBroadcastInterval
-  // }
+  private stopOfferBroadcastInterval() {
+    clearInterval(this._offerBroadcastInterval)
+    delete this._offerBroadcastInterval
+  }
 
   // Safely start it
   private startGarbageCollectionInterval() {
@@ -204,11 +229,10 @@ export class Network extends TypedEventEmitter<Events> {
     this._garbageCollectInterval = setInterval(this.garbageCollect.bind(this), this.config.garbageCollectInterval)
   }
 
-  // // Temporarily removed but kept for safe keeping
-  // private stopGarbageCollectionInterval() {
-  //   clearInterval(this._garbageCollectInterval)
-  //   delete this._garbageCollectInterval
-  // }
+  private stopGarbageCollectionInterval() {
+    clearInterval(this._garbageCollectInterval)
+    delete this._garbageCollectInterval
+  }
 
   private rebroadcast(message: Mes.Message) {
     if (!message.ttl) { return }
@@ -258,7 +282,7 @@ export class Network extends TypedEventEmitter<Events> {
 
     const existingConnection = this.getOrGenerateOpenConnection()
 
-    // We don't want to send switchboard requests for PendingConnections
+    // We don't want to send switchboard requests for pending Connections
     if (!existingConnection.negotiation.sdp) return
 
     // Send our offer to switch

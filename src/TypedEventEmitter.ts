@@ -20,4 +20,10 @@ export default class TypedEventEmitter<T> {
       this.handlers[event] = [handler]
     }
   }
+
+  off(): void {
+    for (let event in this.handlers) {
+      delete this.handlers[event]
+    }
+  }
 }

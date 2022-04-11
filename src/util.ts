@@ -2,7 +2,7 @@ type LogLevel = 1 | 2 | 3 | 4 | 5
 
 export const debugFactory = (appName: string) => {
   return (logLevel: LogLevel, ...args: any[]) => {
-    if (globalThis.DEBUG >= logLevel) {
+    if (globalThis.DEBUG >= logLevel || Number(globalThis.process?.env.DEBUG) >= logLevel) {
       const d = new Date()
       console.log(`[${logLevel}] ${appName} ${d.toLocaleTimeString()}: `, ...args)
     }

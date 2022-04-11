@@ -39,7 +39,9 @@
       switchAddress: 'http://localhost:5678',
       networkId: 'our-awesome-database',
       clientId: localStorage.clientId || crypto.randomUUID(),
-      config: {}
+      config: {
+        respectSwitchboardVolunteerMessages: false
+      }
     })
 
     function sendMessage(message) {
