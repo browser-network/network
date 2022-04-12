@@ -8,13 +8,16 @@
 // bouncing around on the network looks like this.
 export type Message<T = any> = {
   id: t.GUID
-  clientId: t.ClientId
+  address: t.Address // source address
   appId: string
-  ttl: 0 | 1 | 2 | 3 | 4 | 5 | 6
+  ttl: 0 | 1 | 2 | 3 | 4 | 5 | 6 // no infinite message loops!
   type: string
-  destination: t.ClientId | '*'
+  destination: t.Address | '*'
   data: T
+  signatures: Signature[] // See signing scheme TODO
 }
+
+export type Signature = { signer: t.Address, signature: string }
 
 // Various forms of network specific messages
 

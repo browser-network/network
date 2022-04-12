@@ -12,6 +12,7 @@ import TypedEventEmitter from './TypedEventEmitter'
 import BehaviorCache from './BehaviorCache'
 import { NetworkConfig } from './NetworkConfig.d'
 import { Connection } from './Connection'
+import * as bnc from '@browser-network/crypto'
 
 export type Message = Mes.Message
 
@@ -36,14 +37,14 @@ const MEMORY_DURATION = 1000 * 60
 const SWITCHBOARD_BACKOFF_DURATION = 1000 * 10
 
 // Same
-const SWITCHBOARD_REQUEST_ITERATIONS = 15
+const SWITCHBOARD_REQUEST_ITERATIONS = Infinity
 
 // Object you pass in when instantiating a network
 type NetworkProps = {
-  // Where does the switchboard live? We'll be sending regular POST
-  // requests to it to initially get into the network and to onboard
-  // new folk into the network once we're already in.
-  switchAddress: t.SwitchAddress
+  // The EC private key that identifies this node on the network. From this,
+  // the public key will be derived. That public key is used as the address
+  // of this node.
+  secret: t.Secret
 
   // Identify the network we're working with. All nodes who are on this
   // network are going to be receiving the same messages. So make the network
@@ -52,10 +53,10 @@ type NetworkProps = {
   // different networkIds, and the networks never cross.
   networkId: t.NetworkId
 
-  // The id of this one specific node. Different for each machine.
-  // It's convenient to store this in `localStorage` or another local persistent
-  // storage situation.
-  clientId: t.ClientId
+  // Where does the switchboard live? We'll be sending regular POST
+  // requests to it to initially get into the network and to onboard
+  // new folk into the network once we're already in.
+  switchAddress: t.SwitchAddress
 
   // If nothing's passed in, the defaults will be used.
   config?: Partial<NetworkConfig>
@@ -66,7 +67,7 @@ type NetworkProps = {
 // call will look like:
 //
 // network.on('message', ({ appId, message }) => {
-//   if (appId !== myAppId) return
+//   if (appId !== 'my-app-id') return
 //
 //   if (message.type === 'my-type') {
 //     ...
@@ -77,18 +78,20 @@ type Events = {
   'add-connection': Connection
   'destroy-connection': Connection['id']
   'broadcast-message': Mes.Message
+  'bad-message': Mes.Message
   'message': { appId: string, message: Mes.Message }
 }
 
 // TODO Use TypedEventEmitter only as a type and not as the actual code.
 export class Network extends TypedEventEmitter<Events> {
   config: NetworkConfig
-  clientId: t.ClientId
+  address: t.Address
   networkId: t.NetworkId
   switchAddress: t.SwitchAddress
   switchboardRequester: Repeater
   rudeIps: { [address: t.IPAddress]: t.TimeStamp } = {}
   behaviorCache: BehaviorCache
+  private _secret: t.Secret
 
   _connections: { [connectionId: t.GUID]: Connection } = {}
   _seenMessageIds: { [id: t.GUID]: t.TimeStamp } = {}
@@ -97,8 +100,10 @@ export class Network extends TypedEventEmitter<Events> {
   _offerBroadcastInterval: ReturnType<typeof setInterval>
   _garbageCollectInterval: ReturnType<typeof setInterval>
 
-  constructor({ switchAddress, networkId, clientId, config = {} }: NetworkProps) {
+  constructor({ secret, switchAddress, networkId, config = {} }: NetworkProps) {
     super()
+
+    this._secret = secret
 
     this.config = Object.assign({
       offerBroadcastInterval: 1000 * 5,
@@ -111,7 +116,7 @@ export class Network extends TypedEventEmitter<Events> {
 
     this.switchAddress = switchAddress
     this.networkId = networkId
-    this.clientId = clientId
+    this.address = bnc.derivePubKey(secret)
     this.startOfferBroadcastInterval()
     this.startGarbageCollectionInterval()
 
@@ -134,8 +139,6 @@ export class Network extends TypedEventEmitter<Events> {
     this.behaviorCache = new BehaviorCache(this.config.maxMessageRateBeforeRude)
   }
 
-  // TODO the peer.destroy() here throws a SIGSEGV in node (discovered while making
-  // test suite).
   // Stop all listeners, intervals, and connections, so that a process running a network
   // can gracefully stop its own process.
   teardown() {
@@ -145,9 +148,7 @@ export class Network extends TypedEventEmitter<Events> {
     clearTimeout(this._switchboardVolunteerDelayTimeout)
 
     for (let c of this.connections()) {
-      c.peer.removeAllListeners()
-      c.peer.end()
-      c.peer.destroy()
+      this.destroyConnection(c)
     }
 
     for (let conId in this._connections) {
@@ -159,25 +160,31 @@ export class Network extends TypedEventEmitter<Events> {
 
   // The primary means of sending a message into the network for an application.
   // You can pass in a union of your different message types for added type safety.
-  broadcast<M extends { type: string, data: any, appId: string }>(message: M & Partial<Mes.Message>) {
-    // TODO require: data, appId, type
-
-    // We forbid id and clientId from being passed in.
-    message.id = uuid() as string
-    message.clientId = this.clientId
-    type MessageSoFar = typeof message & { id: string, clientId: string }
+  async broadcast<M extends { type: string, data: any, appId: string }>(message: M & Partial<Mes.Message>) {
+    // required: data, appId, type
+    if (!message.type || !message.data || !message.appId) {
+      throw new TypeError('Must supply at least type, data and appId')
+    }
 
     // TODO validate shape here
-    const toBroadcast: Mes.Message = Object.assign((message as MessageSoFar), {
+    let toBroadcast: Mes.Message = Object.assign({
+      id: uuid(),
+      address: this.address,
       ttl: 6,
-      destination: '*'
+      destination: '*',
+      signatures: []
+    }, message)
+
+    toBroadcast.signatures.push({
+      signer: this.address,
+      signature: await bnc.sign(this._secret, toBroadcast)
     })
 
     this.broadcastMessage(toBroadcast)
   }
 
   // List of all our current connections
-  connections(): (Connection)[] {
+  connections(): Connection[] {
     return Object.values(this._connections)
   }
 
@@ -188,22 +195,22 @@ export class Network extends TypedEventEmitter<Events> {
   }
 
   // Add an ip to a rude list, which means we won't connect to then any more.
-  // If an optional clientId is provided, and we're connected to that clientId,
+  // If an optional address is provided, and we're connected to that address,
   // we'll drop them as well.
-  addToRudeList(ip: t.IPAddress, clientId?: t.ClientId) {
+  addToRudeList(ip: t.IPAddress, address?: t.Address) {
     this.rudeIps[ip] = Date.now()
 
-    debug(1, 'added to rude list:', ip, clientId)
+    debug(1, 'added to rude list:', ip, address)
 
     // We can check and make sure we're aren't / don't stay connected to this person
-    if (clientId) {
-      const connection = this.getConnectionByClientId(clientId)
+    if (address) {
+      const connection = this.getConnectionByAddress(address)
       if (!connection) { return }
       this.broadcast({
         type: 'log',
         appId: APP_ID,
         data: 'rude',
-        destination: clientId
+        destination: address
       })
       this.destroyConnection(connection)
     }
@@ -234,24 +241,34 @@ export class Network extends TypedEventEmitter<Events> {
     delete this._garbageCollectInterval
   }
 
-  private rebroadcast(message: Mes.Message) {
-    if (!message.ttl) { return }
-    message.ttl -= 1
-    this.broadcastMessage(message)
-  }
-
   // Send message to all our connections
+  // TODO Fold this into broadcast
   private broadcastMessage(message: Mes.Message) {
-    // TODO validate message shape at runtime
     // TODO make helpers for this
     this._seenMessageIds[message.id] = Date.now()
 
     for (const connection of this.connections()) {
       // This means this is a pending connection, we don't want to send
       // anything over that.
-      if (!connection.negotiation.sdp) return
+      if (!connection.negotiation.sdp) { continue }
 
-      this.send(connection, message)
+      try {
+        // The difference between write and send is that write queues, send
+        // throws if it's not writable yet. Previously there was a race
+        // condition here leading to many initial connections when
+        // using write. Once we removed the asynchronicity from connection
+        // creation, that race condition went away and we're free to use .write
+        // again. However, ephemerality is built into the network, so it's understood
+        // that messages won't always make it. With our rudeness checking on, maybe
+        // it's best not to queue up messages before sending, and just send when
+        // we're connected.
+        // connection.peer.write(JSON.stringify(message))
+        if (!connection.peer.connected) { continue }
+        connection.peer.send(JSON.stringify(message))
+        debug(5, 'sending', message, 'to', connection.address)
+      } catch (e) {
+        debug(3, 'got error trying to send to', connection.address, e)
+      }
     }
 
     this.emit('broadcast-message', message)
@@ -266,13 +283,13 @@ export class Network extends TypedEventEmitter<Events> {
   // TODO It's not a good scheme. Wide open for DoS.
   private beginSwitchboardRequestPeriod() {
     this.switchboardRequester.begin()
-    this.broadcastMessage({
+    this.broadcast({
       id: uuid(),
       appId: APP_ID,
       type: 'switchboard-volunteer',
       destination: '*',
       ttl: 2,
-      clientId: this.clientId,
+      address: this.address,
       data: {}
     })
   }
@@ -282,12 +299,12 @@ export class Network extends TypedEventEmitter<Events> {
 
     const existingConnection = this.getOrGenerateOpenConnection()
 
-    // We don't want to send switchboard requests for pending Connections
+    // We don't want to send switchboard requests for pending connections
     if (!existingConnection.negotiation.sdp) return
 
     // Send our offer to switch
     const resp = await this.sendNegotiationToSwitchingService({
-      clientId: this.clientId,
+      address: this.address,
       networkId: this.networkId,
       connectionId: existingConnection.id,
       ...(existingConnection.negotiation as t.Negotiation)
@@ -330,7 +347,8 @@ export class Network extends TypedEventEmitter<Events> {
     this.emit('switchboard-response', book)
   }
 
-  // TODO Pull this off the proto
+  // TODO Pull this off the proto, along with the other switchboard stuff. These
+  // should be able to live entirely on their own class.
   private async sendNegotiationToSwitchingService(negotiation: t.Negotiation): Promise<t.SwitchboardResponse> {
     try {
       const res = await axios.post(this.switchAddress, negotiation)
@@ -340,7 +358,7 @@ export class Network extends TypedEventEmitter<Events> {
     }
   }
 
-  private handleMessage(message: Mes.Message) {
+  private async handleMessage(message: Mes.Message) {
     // If we've already seen this message, we do nothing
     // with it.
     if (this._seenMessageIds[message.id]) { return }
@@ -349,6 +367,32 @@ export class Network extends TypedEventEmitter<Events> {
     this._seenMessageIds[message.id] = Date.now()
 
     debug(5, 'handleMessage:', message)
+
+    // Ensure the message is cryptographically sound
+
+    // Firstly, if there are no signatures, it is not sound.
+    if (message.signatures.length === 0) {
+      debug(3, 'received message with no signatures!', message)
+      this.emit('bad-message', message)
+    }
+
+    // Now we go through each signature, in reverse order, popping
+    // it out as we go, ensuring each is valid for the resulting
+    // rest of the message.
+    let signatures: Mes.Signature[] = []
+    while (message.signatures.length !== 0) {
+      const signature = message.signatures.pop()
+      signatures.unshift(signature)
+      const isValidSignature = await bnc.verifySignature(message, signature.signature, signature.signer)
+      if (!isValidSignature) {
+        debug(3, 'received message with unverifiable signature!', message)
+        this.emit('bad-message', message)
+        return
+      }
+    }
+
+    // Now we repair the mutation from above
+    message.signatures = signatures
 
     // We are only interested in our own application here.
     // The network is actually an application on the network, lolz.
@@ -367,7 +411,12 @@ export class Network extends TypedEventEmitter<Events> {
       }
     }
 
-    this.rebroadcast(message)
+    // Instead of decrementing the ttl value, since the signatures depend on it
+    // staying the same, we count the signatures to see how many hops the message
+    // has taken.
+    if (message.signatures.length < message.ttl) {
+      this.broadcast(message)
+    }
 
     this.emit('message', { appId: message.appId, message })
   }
@@ -377,13 +426,13 @@ export class Network extends TypedEventEmitter<Events> {
     if (!connection) { return }
 
     connection.on('sdp', () => {
-      this.broadcastMessage({
+      this.broadcast({
         ...connection.negotiation as t.AnswerNegotiation,
         appId: APP_ID,
         id: uuid(),
         ttl: 6,
-        clientId: this.clientId,
-        destination: message.clientId,
+        address: this.address,
+        destination: message.address,
         data: {
           connectionId: message.data.connectionId,
         }
@@ -398,18 +447,18 @@ export class Network extends TypedEventEmitter<Events> {
 
   private handleLogMessage(message: Mes.LogMessage) {
     // Only log messages sent to us
-    if (!['*', this.clientId].includes(message.destination)) { return }
+    if (!['*', this.address].includes(message.destination)) { return }
 
-    console.log(message.clientId + ':', message.data.contents)
+    console.log(message.address + ':', message.data.contents)
   }
 
   private handleSwitchboardVolunteerMessage(message: Mes.SwitchboardVolunteerMessage) {
     if (!this.config.respectSwitchboardVolunteerMessages) {
-      debug(5, 'Switchboard Volunteer Message heard but feature is disabled. Heard from:', message.clientId)
+      debug(5, 'Switchboard Volunteer Message heard but feature is disabled. Heard from:', message.address)
       return
     }
 
-    debug(3, 'heard switchboard volunteer, backing off switchboard requests:', message.clientId)
+    debug(3, 'heard switchboard volunteer, backing off switchboard requests:', message.address)
     this.switchboardRequester.stop()
     if (this._switchboardVolunteerDelayTimeout) { clearTimeout(this._switchboardVolunteerDelayTimeout) }
     this._switchboardVolunteerDelayTimeout = setTimeout(this.beginSwitchboardRequestPeriod.bind(this), SWITCHBOARD_BACKOFF_DURATION + Math.random() * 1000)
@@ -426,7 +475,7 @@ export class Network extends TypedEventEmitter<Events> {
       // The connection's already been retired
       !connection ||
       // Somebody else already got to this open connection
-      connection.clientId ||
+      connection.address ||
       // The ip trying to connect is on our naughty list or not presenting an sdp string
       !answer.sdp || this.isRude(getIpFromRTCSDP(answer.sdp)) ||
       // We've reached our max number of allowed connections
@@ -436,7 +485,7 @@ export class Network extends TypedEventEmitter<Events> {
     debug(3, 'handling answer:', answer)
 
     // Now we know who is at the other end of the open offer we'd previously created.
-    connection.clientId = answer.clientId
+    connection.address = answer.address
 
     // Punch through that nat
     connection.signal(answer)
@@ -448,9 +497,9 @@ export class Network extends TypedEventEmitter<Events> {
     // our rude list, and if we aren't already maxed out.
     if (
       // It's ourselves
-      offer.clientId === this.clientId ||
+      offer.address === this.address ||
       // We're are already connected to this client
-      this.hasConnection(offer.clientId) ||
+      !!this.getConnectionByAddress(offer.address) ||
       // They're on our rude list or not presenting an sdp string
       !offer.sdp || this.isRude(getIpFromRTCSDP(offer.sdp)) ||
       // We have the max number of connections
@@ -458,12 +507,12 @@ export class Network extends TypedEventEmitter<Events> {
     ) { return null }
 
     // There's an offer in the book for a client to whom we're not connected.
-    debug(3, 'fielding an offer from', offer.clientId)
+    debug(3, 'fielding an offer from', offer.address)
 
     // Generate the answer response to peer's answer (new peer object)
     // Always will be present b/c it's new
     const connection = this.generateAnswerConnection(offer)
-    this.addConnection(connection, offer.clientId)
+    this.addConnection(connection, offer.address)
 
     return connection
   }
@@ -473,7 +522,7 @@ export class Network extends TypedEventEmitter<Events> {
 
     const negotiation: t.PendingNegotiation = {
       type: 'offer',
-      clientId: this.clientId,
+      address: this.address,
       connectionId: id,
       sdp: null,
       networkId: this.networkId,
@@ -484,11 +533,11 @@ export class Network extends TypedEventEmitter<Events> {
   }
 
   private generateAnswerConnection(offer: t.OfferNegotiation): Connection {
-    debug(5, 'generateAnswerConnection called for offer:', offer.clientId, offer.connectionId)
+    debug(5, 'generateAnswerConnection called for offer:', offer.address, offer.connectionId)
 
     const negotiation: t.PendingNegotiation = {
       type: 'answer',
-      clientId: this.clientId,
+      address: this.address,
       connectionId: offer.connectionId,
       sdp: null,
       networkId: this.networkId,
@@ -500,10 +549,10 @@ export class Network extends TypedEventEmitter<Events> {
     return connection
   }
 
-  private addConnection(connection: Connection, clientId?: t.ClientId) {
+  private addConnection(connection: Connection, address?: t.Address) {
     // This always needs to happen when we add the connection to our pool,
     // lest we're adding an offer.
-    if (clientId) connection.registerClientId(clientId)
+    if (address) connection.registerAddress(address)
 
     this._connections[connection.id] = connection
     this.registerRTCEventHandlers(connection)
@@ -514,32 +563,32 @@ export class Network extends TypedEventEmitter<Events> {
   private registerRTCEventHandlers(connection: Connection) {
     const { peer } = connection
     peer.on('connect', () => {
-      debug(2, 'CONNECT', connection.clientId)
+      debug(2, 'CONNECT', connection.address)
 
       // Send a welcome log message for the warm fuzzies
-      this.broadcastMessage({
+      this.broadcast({
         type: 'log',
-        clientId: this.clientId,
+        address: this.address,
         appId: APP_ID,
         id: uuid(),
         ttl: 1,
-        destination: connection.clientId,
+        destination: connection.address,
         data: {
-          contents: 'you are now proudly connected to ' + this.clientId,
+          contents: 'Heyo!'
         }
       })
     })
 
     peer.on('data', (data: Uint8Array) => {
-      const { clientId, negotiation } = connection
+      const { address, negotiation } = connection
 
       const peerAddress = getIpFromRTCSDP((negotiation as t.Negotiation).sdp)
-      debug(5, 'got message from:', peerAddress, clientId)
+      debug(5, 'got message from:', peerAddress, address)
 
       // Ensure the machine on the other end of this connection is behaving themselves
       if (!this.behaviorCache.isOnGoodBehavior(peerAddress)) {
-        debug(1, 'whoops, the machine belonging to', clientId, 'is exhibiting bad behavior!')
-        this.addToRudeList(peerAddress, clientId)
+        debug(1, 'whoops, the machine belonging to', address, 'is exhibiting bad behavior!')
+        this.addToRudeList(peerAddress, address)
         return
       }
 
@@ -547,16 +596,16 @@ export class Network extends TypedEventEmitter<Events> {
 
       let message: Mes.Message
       try { message = JSON.parse(str) }
-      catch (e) { return debug(3, 'failed to parse message from', clientId + ':', str, e) }
+      catch (e) { return debug(3, 'failed to parse message from', address + ':', str, e) }
 
       this.handleMessage(message)
     })
 
     peer.on('close', () => { this.destroyConnection(connection) })
 
-    peer.on('end', () => { debug(5, 'p.on("end") fired for client', connection.clientId) })
-    peer.on('writable', () => { debug(5, 'p.on("writable") fired for client', connection.clientId) })
-    peer.on('error', (err: any) => { debug(4, `p.on(error) handler for ${connection.clientId}:`, err) })
+    peer.on('end', () => { debug(5, 'p.on("end") fired for client', connection.address) })
+    peer.on('writable', () => { debug(5, 'p.on("writable") fired for client', connection.address) })
+    peer.on('error', (err: any) => { debug(4, `p.on(error) handler for ${connection.address}:`, err) })
   }
 
   private garbageCollect() {
@@ -577,7 +626,7 @@ export class Network extends TypedEventEmitter<Events> {
   private garbageCollectConnections() {
     // TODO we're keeping track of duplicate clients here so we can garbage collect them.
     // But it'd be better if we weren't having duplicate clients at all.
-    const seenClientIds = {}
+    const seenAddresses = {}
 
     // The actual garbage collection action
     const collect = (connection: Connection) => {
@@ -587,7 +636,7 @@ export class Network extends TypedEventEmitter<Events> {
 
     for (const connectionId in this._connections) {
       const connection = this._connections[connectionId]
-      const { clientId, peer: { destroyed } } = connection
+      const { address, peer: { destroyed } } = connection
       if (destroyed) {
         return collect(connection)
       }
@@ -604,9 +653,9 @@ export class Network extends TypedEventEmitter<Events> {
       // Also I tried specifying manually the same channel name at Peer instantiation time,
       // but that did not seem to have any effect.
 
-      // This reads "if we've seen this clientId already, assess if either of the connections
+      // This reads "if we've seen this address already, assess if either of the connections
       // have no channelName and remove it if it doesn't."
-      const seenConnectionId = seenClientIds[clientId]
+      const seenConnectionId = seenAddresses[address]
       if (seenConnectionId) {
 
         // These two mean if either has no channelName, remove it.
@@ -619,12 +668,12 @@ export class Network extends TypedEventEmitter<Events> {
           return collect(this._connections[seenConnectionId])
         }
       }
-      seenClientIds[clientId] = connection.id
+      seenAddresses[address] = connection.id
     }
   }
 
   private destroyConnection(connection: Connection) {
-    debug(4, 'destroying connection', connection.clientId)
+    debug(4, 'destroying connection', connection.address)
     const { peer } = connection
     peer.removeAllListeners()
     peer.end()
@@ -633,35 +682,15 @@ export class Network extends TypedEventEmitter<Events> {
     this.emit('destroy-connection', connection.id)
   }
 
-  // Send message to a specific connection
-  private send(connection: Connection, message: Mes.Message) {
-    try {
-      // The difference between write and send is that write queues, send
-      // throws if it's not writable yet. Previously there was a race
-      // condition here leading to many initial connections when
-      // using write. Once we removed the asynchronicity from connection
-      // creation, that race condition went away and we're free to use .write
-      // again. However, ephemerality is built into the network, so it's understood
-      // that messages won't always make it. With our rudeness checking on, maybe
-      // it's best not to queue up messages before sending, and just send when
-      // we're connected.
-      // connection.peer.write(JSON.stringify(message))
-      if (!connection.peer.connected) { return }
-      connection.peer.send(JSON.stringify(message))
-      debug(5, 'sending', message, 'to', connection.clientId)
-    } catch (e) {
-      debug(3, 'got error trying to send to', connection.clientId, e)
-    }
-  }
-
-  private async broadcastOffer() {
+  private broadcastOffer() {
     const openConnection = this.getOrGenerateOpenConnection()
 
-    const offer: Mes.OfferMessage = {
-      id: uuid(),
+    // We don't want to send messages about pending connections
+    if (!openConnection.negotiation.sdp) return
+
+    const offer = {
       ttl: 6,
       type: 'offer',
-      clientId: this.clientId,
       appId: APP_ID,
       destination: '*',
       data: {
@@ -669,25 +698,19 @@ export class Network extends TypedEventEmitter<Events> {
         connectionId: openConnection.id,
         ...(openConnection.negotiation as t.OfferNegotiation)
       }
-    }
+    } as const
 
-    this.broadcastMessage(offer)
+    this.broadcast(offer)
   }
 
-  private hasConnection(clientId: t.ClientId): boolean {
-    return !!this.getConnectionByClientId(clientId)
-  }
-
-  private getConnectionByClientId(clientId: t.ClientId): Connection | undefined {
-    return this.connections().find(con => con.clientId === clientId)
+  private getConnectionByAddress(address: t.Address): Connection | undefined {
+    return this.connections().find(con => con.address === address)
   }
 
   // If we have an open connection in the pool, return that.
   // Otherwise, generate an open connection.
   private getOrGenerateOpenConnection(): Connection {
-    // return this.connections().find(con => con.negotiation.type === 'offer') // TODO
-    // let oc = this.connections().find(con => !con.peer.connected) // TODO
-    let oc = this.connections().find(con => !con.clientId) // TODO
+    let oc = this.connections().find(con => !con.address)
     if (!oc) {
       oc = this.generateOfferConnection()
       this.addConnection(oc)

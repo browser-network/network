@@ -12,7 +12,7 @@
 <body style="background-color: black; color: white;">
 
   <code>
-    <h2><code id='client-id'></code></h2>
+    <h2><code id='address'></code></h2>
 
     <h3>connections</h3>
     <code id='connections'></code>
@@ -27,7 +27,7 @@
     <br>
     <br>
 
-    <button onclick='sendMessage(network.clientId + ": Hello there!")'>Say Hi</button>
+    <button onclick='sendMessage(network.address + ": Hello there!")'>Say Hi</button>
   </code>
 
   <script src="/umd/network.js"></script>
@@ -37,8 +37,8 @@
 
     const network = window.network = new Network.Network({
       switchAddress: 'http://localhost:5678',
-      networkId: 'our-awesome-database',
-      clientId: localStorage.clientId || crypto.randomUUID(),
+      networkId: 'network-test-id',
+      secret: Network.Network.crypto.generateSecret(),
       config: {
         respectSwitchboardVolunteerMessages: false
       }
@@ -46,14 +46,10 @@
 
     function sendMessage(message) {
       network.broadcast({
-        id: crypto.randomUUID(),
         type: 'helloooo',
         appId: APP_ID,
         data: message,
-        ttl: 1,
-        destination: '*',
-        timestamp: Date.now(),
-        clientId: network.clientId
+        ttl: 6,
       })
     }
 
@@ -66,18 +62,18 @@
           break;
         }
         default: {
-          document.querySelector('#most-recent').innerHTML = message.clientId
+          document.querySelector('#most-recent').innerHTML = message.address
         }
       }
     })
 
     setInterval(function() {
-      document.querySelector('#client-id').innerHTML = JSON.stringify(network.clientId, 0, 2)
+      document.querySelector('#address').innerHTML = JSON.stringify(network.address, 0, 2)
 
       document.querySelector('#connections').innerHTML = network.connections.bind(network)().map(c => {
         return '<br>' + JSON.stringify({
           connectionId: c.id,
-          clientId: c.clientId
+          address: c.address
         })
       })
       document.querySelector('#seen-messages').innerHTML = JSON.stringify(Object.keys(network._seenMessageIds).length, 0, 2)

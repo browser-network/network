@@ -63,7 +63,11 @@ What immediately comes to mind:
   you can just leave a browser window of your app open. Another way of saying this,
   is the only programming you have to do to have a real server is opening up a
   browser window :P Note that if you wish to do _slightly more programming_, you can
-  also run a node.js node with the same `networkId`.
+  also run a node.js node with the same `networkId`, and it will act as a headless
+  browser window, fulfilling all the same functionality as a browser window would.
+
+* Cryptographic security - Network uses `eccrypto` to ensure veracity of messages.
+  It's cryptographically difficult to spoof or modify a message that's not your own.
 
 ### How it works
 
@@ -144,7 +148,7 @@ messages in the browser console.
 
       const network = window.network = new Network.Network({
         switchAddress: 'http://localhost:5678', // default address of switchboard
-        clientId: crypto.randomUUID(), // arbitrary string
+        address: crypto.randomUUID(), // arbitrary string
         networkId: 'test-network'
       })
 
@@ -192,7 +196,7 @@ import Network from '@browser-network/network'
 
 const network = new Network({
   switchAddress: 'http://localhost:5678', // default address of switchboard
-  clientId: globalThis.crypto.randomUUID(), // arbitrary string
+  address: globalThis.crypto.randomUUID(), // arbitrary string
   networkId: '<something unique but the same b/t all your nodes>',
   config:{
     offerBroadcastInterval: 1000 * 5,
@@ -281,16 +285,7 @@ TODO
 * Tunable involvement parameters - allow network / disc usage to be modulated
 * Get rid of terrible custom debug implementation.
 * Assess how much of our inter peer data could be represented with buffers
-* if a broadcast is made with a specific clientId, and we're connected to that clientId,
-  just go ahead and send directly to that clientId instead of broadcasting to everyone.
+* if a broadcast is made with a specific address, and we're connected to that address,
+  just go ahead and send directly to that address instead of broadcasting to everyone.
 * Log message config param - toggle for whether to respect log messages. Might be
   a security vulnerability.
-* Bring cryptographic integrity into this project. Originally I was unsure of whether
-  it would be helpful because it doesn't prevent spam. If you got blocked somehow,
-  you could just change your priv key and boom you're a new user. Although now that
-  I write it out, I could see a reputation system working just fine about that.
-  Anyways there's another reason to bring it in - to prevent spoofing the clientId
-  of a message. Right now I can broadcast a message and put any clientId I'd like
-  on it. As far as network is currently concerned this is not an issue, you can't spoof
-  someone's sdp information. The worst you could do is confuse someone's connection pool.
-  Actually that's a low hanging DOS right there. So yeah, network needs cryptographic principles.

@@ -7,8 +7,8 @@ export type SDPString = string
 export type SwitchAddress = string
 
 export type PubKey = string
-export type PrivKey = string
-export type ClientId = string
+export type Secret = string
+export type Address = PubKey
 export type NetworkId = string
 
 export type RTCOffer = {
@@ -23,7 +23,7 @@ export type RTCAnswer = {
 
 
 export type NegotiationCommon = {
-  clientId: t.ClientId
+  address: t.Address
   type: 'offer' | 'answer'
   sdp: t.SDPString
   connectionId: t.GUID

@@ -16,17 +16,17 @@ export class Connection extends TypedEventEmitter<Events> {
   // other node connections to facilitate more coordinated answer sending.
   id: t.GUID
 
-  // With whom is this connection established? If there is no clientId on the connection,
+  // With whom is this connection established? If there is no address on the connection,
   // that means it's an "open connection", one the node is keeping around and broadcasting
   // connection information from in RTC "offer" form.
-  clientId?: t.ClientId
+  address?: t.Address
 
   // This is a SimplePeer instance. This is how we do WebRTC connections, so the peer
   // object is the actual p2p connection.
   peer: Peer.Instance
 
   // This is the most recent negotiation the connection has received. If this is an "offer"
-  // negotiation by us (with our clientId), it means this is our open connection. If it's an
+  // negotiation by us (with our address), it means this is our open connection. If it's an
   // "answer" by us, it means we've responded to someone else's offer. If it's an answer
   // from someone else, they've responded to our open offer.
   negotiation: PendingNegotiation | Negotiation
@@ -47,8 +47,8 @@ export class Connection extends TypedEventEmitter<Events> {
     })
   }
 
-  registerClientId(clientId: t.ClientId) {
-    this.clientId = clientId
+  registerAddress(address: t.Address) {
+    this.address = address
   }
 
   // Safely signal a peer
