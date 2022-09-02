@@ -147,7 +147,7 @@ messages in the browser console.
     <script src="//unpkg.com/@browser-network/crypto/umd/crypto.min.js"></script>
     <script>
 
-      const network = window.network = new Network.Network({
+      const network = window.network = new Network.default({
         switchAddress: 'http://localhost:5678', // default address of switchboard
         secret: Bnc.generateSecret(),
         networkId: 'test-network'

@@ -83,7 +83,7 @@ type Events = {
 }
 
 // TODO Use TypedEventEmitter only as a type and not as the actual code.
-export class Network extends TypedEventEmitter<Events> {
+export default class Network extends TypedEventEmitter<Events> {
   config: NetworkConfig
   address: t.Address
   networkId: t.NetworkId
