@@ -1,4 +1,4 @@
-import { Network } from '../../src'
+import Network from '../../src'
 import { randomUUID } from 'crypto'
 import { generateSecret } from '@browser-network/crypto'
 import * as t from '../../src/types'

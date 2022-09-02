@@ -1,4 +1,4 @@
-import { Network } from '../src'
+import Network from '../src'
 import crypto from 'crypto'
 import tap from 'tap'
 import { ensureEventually } from './util'

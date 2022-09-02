@@ -194,10 +194,11 @@ First up, instantiate a Network.
 
 ```ts
 import Network from '@browser-network/network'
+import Bnc from '@browser-network/network'
 
 const network = new Network({
   switchAddress: 'http://localhost:5678', // default address of switchboard
-  address: globalThis.crypto.randomUUID(), // arbitrary string
+  secret: Bnc.generateSecret(),
   networkId: '<something unique but the same b/t all your nodes>',
   config:{
     offerBroadcastInterval: 1000 * 5,
