@@ -9,11 +9,11 @@ export default class TypedEventEmitter<T> {
     this.handlers = {}
   }
 
-  emit<K extends keyof T>(event: K, value?: T[K]): void {
+  emit<K extends keyof T>(event: K, value: T[K]): void {
     this.handlers[event]?.forEach(h => h(value))
   }
 
-  on<K extends keyof T>(event: K, handler: (value?: T[K]) => void): void {
+  on<K extends keyof T>(event: K, handler: (value: T[K]) => void): void {
     if(this.handlers[event]) {
       this.handlers[event].push(handler)
     } else {

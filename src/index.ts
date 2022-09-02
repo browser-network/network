@@ -158,6 +158,8 @@ export default class Network extends TypedEventEmitter<Events> {
     this.off()
   }
 
+  // TODO: In nvim, when doing <leader>jk, there's sometimes a message that describes
+  // the method. Let's get that into there for this.
   // The primary means of sending a message into the network for an application.
   // You can pass in a union of your different message types for added type safety.
   async broadcast<M extends { type: string, data: any, appId: string }>(message: M & Partial<Mes.Message>) {
@@ -344,7 +346,6 @@ export default class Network extends TypedEventEmitter<Events> {
       }
     }
 
-    // How to type event emitter
     this.emit('switchboard-response', book)
   }
 

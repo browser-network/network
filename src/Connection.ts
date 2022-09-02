@@ -42,7 +42,7 @@ export class Connection extends TypedEventEmitter<Events> {
     peer.on('signal', data => {
       if (['offer', 'answer'].includes(data.type)) {
         this.negotiation.sdp = data.sdp
-        this.emit('sdp')
+        this.emit('sdp', null)
       }
     })
   }
