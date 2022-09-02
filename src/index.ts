@@ -5,7 +5,15 @@ import axios from 'axios'
 import { v4 as uuid } from 'uuid'
 
 import * as t from './types.d'
-import * as Mes from './Message.d'
+import {
+  Message,
+  AnswerMessage,
+  LogMessage,
+  SwitchboardVolunteerMessage,
+  Signature,
+  NetworkMessage,
+  OfferMessage
+} from './Message.d'
 import { debugFactory, exhaustive, getIpFromRTCSDP } from './util'
 import { Repeater } from './Repeater'
 import TypedEventEmitter from './TypedEventEmitter'
@@ -13,8 +21,6 @@ import BehaviorCache from './BehaviorCache'
 import { NetworkConfig } from './NetworkConfig.d'
 import { Connection } from './Connection'
 import * as bnc from '@browser-network/crypto'
-
-export type Message = Mes.Message
 
 const debug = debugFactory('Network')
 
@@ -77,9 +83,9 @@ type Events = {
   'switchboard-response': t.SwitchboardBook
   'add-connection': Connection
   'destroy-connection': Connection['id']
-  'broadcast-message': Mes.Message
-  'bad-message': Mes.Message
-  'message': { appId: string, message: Mes.Message }
+  'broadcast-message': Message
+  'bad-message': Message
+  'message': { appId: string, message: Message }
 }
 
 // TODO Use TypedEventEmitter only as a type and not as the actual code.
@@ -162,14 +168,14 @@ export default class Network extends TypedEventEmitter<Events> {
   // the method. Let's get that into there for this.
   // The primary means of sending a message into the network for an application.
   // You can pass in a union of your different message types for added type safety.
-  async broadcast<M extends { type: string, data: any, appId: string }>(message: M & Partial<Mes.Message>) {
+  async broadcast<M extends { type: string, data: any, appId: string }>(message: M & Partial<Message>) {
     // required: data, appId, type
     if (!message.type || !message.data || !message.appId) {
       throw new TypeError('Must supply at least type, data and appId')
     }
 
     // TODO validate shape here
-    let toBroadcast: Mes.Message = Object.assign({
+    let toBroadcast: Message = Object.assign({
       id: uuid(),
       address: this.address,
       ttl: 6,
@@ -245,7 +251,7 @@ export default class Network extends TypedEventEmitter<Events> {
 
   // Send message to all our connections
   // TODO Fold this into broadcast
-  private broadcastMessage(message: Mes.Message) {
+  private broadcastMessage(message: Message) {
     // TODO make helpers for this
     this._seenMessageIds[message.id] = Date.now()
 
@@ -360,7 +366,7 @@ export default class Network extends TypedEventEmitter<Events> {
     }
   }
 
-  private async handleMessage(message: Mes.Message) {
+  private async handleMessage(message: Message) {
     // If we've already seen this message, we do nothing
     // with it.
     if (this._seenMessageIds[message.id]) { return }
@@ -381,7 +387,7 @@ export default class Network extends TypedEventEmitter<Events> {
     // Now we go through each signature, in reverse order, popping
     // it out as we go, ensuring each is valid for the resulting
     // rest of the message.
-    let signatures: Mes.Signature[] = []
+    let signatures: Signature[] = []
     while (message.signatures.length !== 0) {
       const signature = message.signatures.pop()
       signatures.unshift(signature)
@@ -401,7 +407,7 @@ export default class Network extends TypedEventEmitter<Events> {
     // Note we're using 'massage' here only so typescript knows
     // about the correct typing. Try getting exhaustiveness without
     // it.
-    const massage = message as Mes.NetworkMessage
+    const massage = message as NetworkMessage
     if (message.appId === APP_ID) {
       switch (massage.type) {
         case 'offer': this.handleOfferMessage(massage); break;;
@@ -423,7 +429,7 @@ export default class Network extends TypedEventEmitter<Events> {
     this.emit('message', { appId: message.appId, message })
   }
 
-  private handleOfferMessage(message: Mes.OfferMessage) {
+  private handleOfferMessage(message: OfferMessage) {
     const connection = this.handleOffer(message.data)
     if (!connection) { return }
 
@@ -443,18 +449,18 @@ export default class Network extends TypedEventEmitter<Events> {
 
   }
 
-  private handleAnswerMessage(message: Mes.AnswerMessage) {
+  private handleAnswerMessage(message: AnswerMessage) {
     this.handleAnswer(message.data)
   }
 
-  private handleLogMessage(message: Mes.LogMessage) {
+  private handleLogMessage(message: LogMessage) {
     // Only log messages sent to us
     if (!['*', this.address].includes(message.destination)) { return }
 
     console.log(message.address + ':', message.data.contents)
   }
 
-  private handleSwitchboardVolunteerMessage(message: Mes.SwitchboardVolunteerMessage) {
+  private handleSwitchboardVolunteerMessage(message: SwitchboardVolunteerMessage) {
     if (!this.config.respectSwitchboardVolunteerMessages) {
       debug(5, 'Switchboard Volunteer Message heard but feature is disabled. Heard from:', message.address)
       return
@@ -596,7 +602,7 @@ export default class Network extends TypedEventEmitter<Events> {
 
       const str = data.toString()
 
-      let message: Mes.Message
+      let message: Message
       try { message = JSON.parse(str) }
       catch (e) { return debug(3, 'failed to parse message from', address + ':', str, e) }
 
