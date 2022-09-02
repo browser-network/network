@@ -75,10 +75,10 @@ When you first open the webpage, the app does need some way to find at least
 one node on the network. So we have a [switching service](#the-switching-service).
 
 Once we connect to another node that's in a network (by we here, I mean a node,
-if the reader will allow), then we'll start to hear [messages](#messages) from
+    if the reader will allow), then we'll start to hear [messages](#messages) from
 our "neighbor" nodes, which is to say, those in the network we're directly
 connected to. The messages may originally come from those neighbors or they may not. Each
-message has a ttl. If we receive a message with a ttl > 1, we decrement it and
+message has a ttl (time to live). If we receive a message with a ttl > 1, we decrement it and
 pass it along on to our neighbors. In this way, the whole network can receive
 messages even though not every node is connected to each other.
 
@@ -144,11 +144,12 @@ messages in the browser console.
 <html lang="en">
   <body>
     <script src="//unpkg.com/@browser-network/network/umd/network.min.js"></script>
+    <script src="//unpkg.com/@browser-network/crypto/umd/crypto.min.js"></script>
     <script>
 
       const network = window.network = new Network.Network({
         switchAddress: 'http://localhost:5678', // default address of switchboard
-        address: crypto.randomUUID(), // arbitrary string
+        secret: Bnc.generateSecret(),
         networkId: 'test-network'
       })
 

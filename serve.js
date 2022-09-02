@@ -1,5 +1,5 @@
 //
-// This is what's hosting when you run `npm run dev`
+// This is what's hosting when you run `npm run start:dev`
 //
 
 const http = require('http')

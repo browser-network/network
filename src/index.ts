@@ -300,6 +300,7 @@ export class Network extends TypedEventEmitter<Events> {
     const existingConnection = this.getOrGenerateOpenConnection()
 
     // We don't want to send switchboard requests for pending connections
+    // TODO make a method for this
     if (!existingConnection.negotiation.sdp) return
 
     // Send our offer to switch

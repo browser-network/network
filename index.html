@@ -31,14 +31,16 @@
   </code>
 
   <script src="/umd/network.js"></script>
+  <script src="//unpkg.com/@browser-network/crypto/umd/crypto.min.js"></script>
 
   <script>
     const APP_ID = 'Woohooo-this-is-our-test-app'
+    Network = Network.Network
 
-    const network = window.network = new Network.Network({
+    const network = window.network = new Network({
       switchAddress: 'http://localhost:5678',
       networkId: 'network-test-id',
-      secret: Network.Network.crypto.generateSecret(),
+      secret: Bnc.generateSecret(),
       config: {
         respectSwitchboardVolunteerMessages: false
       }
