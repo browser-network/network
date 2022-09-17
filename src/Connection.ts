@@ -1,17 +1,13 @@
 import { PendingNegotiation, Negotiation } from './types.d'
 import * as t from './types.d'
 import Peer from 'simple-peer'
-import TypedEventEmitter from './TypedEventEmitter'
 import { debugFactory } from './util'
+import EventEmitter from 'events'
 const debug = debugFactory('Connection')
 
 const IS_NODE = typeof process !== 'undefined'
 
-type Events = {
-  'sdp': void
-}
-
-export class Connection extends TypedEventEmitter<Events> {
+export class Connection extends EventEmitter {
   // A unique ID created when the connection originally created, used to identify
   // other node connections to facilitate more coordinated answer sending.
   id: t.GUID

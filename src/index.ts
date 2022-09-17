@@ -7,20 +7,27 @@ import { v4 as uuid } from 'uuid'
 import * as t from './types.d'
 import {
   Message,
-  AnswerMessage,
-  LogMessage,
-  SwitchboardVolunteerMessage,
   Signature,
   NetworkMessage,
-  OfferMessage
-} from './Message.d'
+  OfferMessage,
+  AnswerMessage,
+  SwitchboardVolunteerMessage,
+  LogMessage
+} from './Message'
+
 import { debugFactory, exhaustive, getIpFromRTCSDP } from './util'
 import { Repeater } from './Repeater'
-import TypedEventEmitter from './TypedEventEmitter'
 import BehaviorCache from './BehaviorCache'
 import { NetworkConfig } from './NetworkConfig.d'
 import { Connection } from './Connection'
 import * as bnc from '@browser-network/crypto'
+import { EventEmitter } from 'events'
+
+// It's useful to have this so a user can nail down exactly the type
+// they're working with, like:
+//
+// network.on('message', (message: Message<MyDataType>) => {})
+export type { Message }
 
 const debug = debugFactory('Network')
 
@@ -68,28 +75,8 @@ type NetworkProps = {
   config?: Partial<NetworkConfig>
 }
 
-// Network extends an event emitter. This is a mapping from event
-// to the type it'll return. For those humans out there, your handler
-// call will look like:
-//
-// network.on('message', ({ appId, message }) => {
-//   if (appId !== 'my-app-id') return
-//
-//   if (message.type === 'my-type') {
-//     ...
-//   }
-// })
-type Events = {
-  'switchboard-response': t.SwitchboardBook
-  'add-connection': Connection
-  'destroy-connection': Connection['id']
-  'broadcast-message': Message
-  'bad-message': Message
-  'message': { appId: string, message: Message }
-}
-
-// TODO Use TypedEventEmitter only as a type and not as the actual code.
-export default class Network extends TypedEventEmitter<Events> {
+// TODO make _connections etc private
+export default class Network {
   config: NetworkConfig
   address: t.Address
   networkId: t.NetworkId
@@ -106,9 +93,9 @@ export default class Network extends TypedEventEmitter<Events> {
   _offerBroadcastInterval: ReturnType<typeof setInterval>
   _garbageCollectInterval: ReturnType<typeof setInterval>
 
-  constructor({ secret, switchAddress, networkId, config = {} }: NetworkProps) {
-    super()
+  private _eventEmitter: EventEmitter = new EventEmitter()
 
+  constructor({ secret, switchAddress, networkId, config = {} }: NetworkProps) {
     this._secret = secret
 
     this.config = Object.assign({
@@ -145,6 +132,30 @@ export default class Network extends TypedEventEmitter<Events> {
     this.behaviorCache = new BehaviorCache(this.config.maxMessageRateBeforeRude)
   }
 
+  on(type: 'message', handler: (message: Message) => void): void
+  on(type: 'broadcast-message', handler: (message: Message) => void): void
+  on(type: 'bad-message', handler: (message: Message) => void): void
+  on(type: 'add-connection', handler: (connection: Connection) => void): void
+  on(type: 'destroy-connection', handler: (id: Connection['id']) => void): void
+  on(type: 'switchboard-response', handler: (book: t.SwitchboardBook) => void): void
+  on(type: string, handler: (data: any) => void) {
+    this._eventEmitter.on(type, handler)
+  }
+
+  // Even though these are private I think it's handy to have them here next
+  // to their counterparts
+  private _emit(type: 'message', message: Message): void
+  private _emit(type: 'broadcast-message', message: Message): void
+  private _emit(type: 'bad-message', message: Message): void
+  private _emit(type: 'add-connection', connection: Connection): void
+  private _emit(type: 'destroy-connection', id: Connection['id']): void
+  private _emit(type: 'switchboard-response', book: t.SwitchboardBook): void
+  private _emit(type: string, data: any) {
+    this._eventEmitter.emit(type, data)
+  }
+
+  removeAllListeners = this._eventEmitter.removeAllListeners
+
   // Stop all listeners, intervals, and connections, so that a process running a network
   // can gracefully stop its own process.
   teardown() {
@@ -161,7 +172,7 @@ export default class Network extends TypedEventEmitter<Events> {
       delete this._connections[conId]
     }
 
-    this.off()
+    this.removeAllListeners()
   }
 
   // TODO: In nvim, when doing <leader>jk, there's sometimes a message that describes
@@ -279,7 +290,7 @@ export default class Network extends TypedEventEmitter<Events> {
       }
     }
 
-    this.emit('broadcast-message', message)
+    this._emit('broadcast-message', message)
   }
 
   // Start a single round of switchboard requests. One round is
@@ -352,7 +363,7 @@ export default class Network extends TypedEventEmitter<Events> {
       }
     }
 
-    this.emit('switchboard-response', book)
+    this._emit('switchboard-response', book)
   }
 
   // TODO Pull this off the proto, along with the other switchboard stuff. These
@@ -381,7 +392,7 @@ export default class Network extends TypedEventEmitter<Events> {
     // Firstly, if there are no signatures, it is not sound.
     if (message.signatures.length === 0) {
       debug(3, 'received message with no signatures!', message)
-      this.emit('bad-message', message)
+      this._emit('bad-message', message)
     }
 
     // Now we go through each signature, in reverse order, popping
@@ -394,7 +405,7 @@ export default class Network extends TypedEventEmitter<Events> {
       const isValidSignature = await bnc.verifySignature(message, signature.signature, signature.signer)
       if (!isValidSignature) {
         debug(3, 'received message with unverifiable signature!', message)
-        this.emit('bad-message', message)
+        this._emit('bad-message', message)
         return
       }
     }
@@ -426,7 +437,7 @@ export default class Network extends TypedEventEmitter<Events> {
       this.broadcast(message)
     }
 
-    this.emit('message', { appId: message.appId, message })
+    this._emit('message', message)
   }
 
   private handleOfferMessage(message: OfferMessage) {
@@ -565,7 +576,7 @@ export default class Network extends TypedEventEmitter<Events> {
     this._connections[connection.id] = connection
     this.registerRTCEventHandlers(connection)
 
-    this.emit('add-connection', connection)
+    this._emit('add-connection', connection)
   }
 
   private registerRTCEventHandlers(connection: Connection) {
@@ -632,7 +643,7 @@ export default class Network extends TypedEventEmitter<Events> {
   }
 
   private garbageCollectConnections() {
-    // TODO we're keeping track of duplicate clients here so we can garbage collect them.
+    // TODO we're keeping track of duplicate clients here so we can garbage collect the
     // But it'd be better if we weren't having duplicate clients at all.
     const seenAddresses = {}
 
@@ -687,7 +698,7 @@ export default class Network extends TypedEventEmitter<Events> {
     peer.end()
     peer.destroy()
     delete this._connections[connection.id]
-    this.emit('destroy-connection', connection.id)
+    this._emit('destroy-connection', connection.id)
   }
 
   private broadcastOffer() {

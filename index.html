@@ -55,7 +55,7 @@
       })
     }
 
-    network.on('message', ({ appId, message}) => {
+    network.on('message', (message) => {
       switch (message.type) {
         case 'helloooo': {
           console.log('got app message:', message)

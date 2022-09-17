@@ -219,11 +219,11 @@ Network is essentially a message event emitter, so listening for messages will
 be your main interaction with the network.
 
 ```ts
-network.on('message', ({ appId, message }) => {
+network.on('message', (message) => {
   // You'll usually want to ensure the message is for your app. It's
   // just a way to namespace your messages amongst the sea of other
   // messages on the network.
-  if (appId !== myAppId) return
+  if (message.appId !== myAppId) return
 
   // message is of type Message
   switch (message.type) {

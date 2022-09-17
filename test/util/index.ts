@@ -59,7 +59,7 @@ export class Networks {
 
       this.nodes.push(network)
 
-      network.on('message', ({ message }) => {
+      network.on('message', (message) => {
         if (!this.seenNetworkAddies[network.address]) {
           this.seenNetworkAddies[network.address] = {}
         }
