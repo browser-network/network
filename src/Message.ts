@@ -16,7 +16,7 @@ export type Message<T = any> = {
   ttl: 0 | 1 | 2 | 3 | 4 | 5 | 6 // no infinite message loops!
   type: string
   destination: t.Address | '*'
-  data: T
+  data?: T
   signatures: Signature[] // See signing scheme TODO
 }
 

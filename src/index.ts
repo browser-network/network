@@ -179,10 +179,10 @@ export default class Network {
   // the method. Let's get that into there for this.
   // The primary means of sending a message into the network for an application.
   // You can pass in a union of your different message types for added type safety.
-  async broadcast<M extends { type: string, data: any, appId: string }>(message: M & Partial<Message>) {
-    // required: data, appId, type
-    if (!message.type || !message.data || !message.appId) {
-      throw new TypeError('Must supply at least type, data and appId')
+  async broadcast<M extends { type: string, data?: any, appId: string }>(message: M & Partial<Message>) {
+    // required: type, appId
+    if (!message.type || !message.appId) {
+      throw new TypeError('Must supply at least `type` and `appId`')
     }
 
     // TODO validate shape here
