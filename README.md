@@ -148,9 +148,9 @@ messages in the browser console.
     <script>
 
       const network = window.network = new Network.default({
-        switchAddress: 'http://localhost:5678', // default address of switchboard
+        switchAddress: 'http://localhost:5678', // Run npx `@browser-network/switchboard` to get this running locally
         secret: Bnc.generateSecret(),
-        networkId: 'test-network'
+        networkId: 'test-network' // Everyone using this id will receive messages from each other
       })
 
       network.on('message', console.log)
@@ -160,8 +160,16 @@ messages in the browser console.
         counter += 1
 
         network.broadcast({
+          // Fer message differentiation
           type: 'amazing-hello-message',
+
+          // Pass around data
           data: 'This is message number ' + counter,
+
+          // identifier for the library or subsystem using this message.
+          // Allows for a complex system to not have to worry about message
+          // type collisions, or to be bombarded by network or library level
+          // messages.
           appId: 'my-cool-app-id'
         })
       }, 1000)
