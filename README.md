@@ -204,6 +204,7 @@ First up, instantiate a Network.
 import Network from '@browser-network/network'
 import Bnc from '@browser-network/network'
 
+// TODO Here doc all these config params and how to use UserMessage
 const network = new Network({
   switchAddress: 'http://localhost:5678', // default address of switchboard
   secret: Bnc.generateSecret(),

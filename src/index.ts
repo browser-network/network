@@ -76,7 +76,9 @@ type NetworkProps = {
 }
 
 // TODO make _connections etc private
-export default class Network {
+// TODO explain how to use this UserMessage type
+type MinimumMessage = Partial<Message> & { type: string, appId: string }
+export default class Network<UserMessage extends MinimumMessage = MinimumMessage> {
   config: NetworkConfig
   address: t.Address
   networkId: t.NetworkId
@@ -132,9 +134,9 @@ export default class Network {
     this.behaviorCache = new BehaviorCache(this.config.maxMessageRateBeforeRude)
   }
 
-  on(type: 'message', handler: (message: Message) => void): void
-  on(type: 'broadcast-message', handler: (message: Message) => void): void
-  on(type: 'bad-message', handler: (message: Message) => void): void
+  on(type: 'message', handler: (message: UserMessage & Message) => void): void
+  on(type: 'broadcast-message', handler: (message: UserMessage & Message) => void): void
+  on(type: 'bad-message', handler: (message: any) => void): void
   on(type: 'add-connection', handler: (connection: Connection) => void): void
   on(type: 'destroy-connection', handler: (id: Connection['id']) => void): void
   on(type: 'switchboard-response', handler: (book: t.SwitchboardBook) => void): void
@@ -179,17 +181,26 @@ export default class Network {
   // the method. Let's get that into there for this.
   // The primary means of sending a message into the network for an application.
   // You can pass in a union of your different message types for added type safety.
-  async broadcast<M extends { type: string, data?: any, appId: string }>(message: M & Partial<Message>) {
+  // Also, if you pass in custom message types to Network, like:
+  // new Network<{ type: 'hello', appId: string }>(...)
+  // then you can be sure when you broadcast you're obeying your own types
+  async broadcast(message: UserMessage) {
+    this._broadcastInternal(message as Partial<Message> & { type: string, appId: string })
+  }
+
+  // The purpose of having a broadcast separate from broadcast internal is one of typing.
+  // I'm allowing this since this app (Network) is the only app that uses Network that doesn't
+  // instantiate Network thereby giving it the instantiation time typing of UserMessage.
+  private async _broadcastInternal(message: Partial<Message> & { type: string, appId: string }) {
     // required: type, appId
     if (!message.type || !message.appId) {
       throw new TypeError('Must supply at least `type` and `appId`')
     }
 
-    // TODO validate shape here
     let toBroadcast: Message = Object.assign({
       id: uuid(),
       address: this.address,
-      ttl: 6,
+      ttl: 6 as 5, // lol
       destination: '*',
       signatures: []
     }, message)
@@ -199,7 +210,38 @@ export default class Network {
       signature: await bnc.sign(this._secret, toBroadcast)
     })
 
-    this.broadcastMessage(toBroadcast)
+    // TODO make helpers for this
+    this._seenMessageIds[toBroadcast.id] = Date.now()
+
+    for (const connection of this.connections()) {
+      // This means this is a pending connection, we don't want to send
+      // anything over that.
+      if (!connection.negotiation.sdp) { continue }
+
+      try {
+        // The difference between write and send is that write queues, send
+        // throws if it's not writable yet. Previously there was a race
+        // condition here leading to many initial connections when
+        // using write. Once we removed the asynchronicity from connection
+        // creation, that race condition went away and we're free to use .write
+        // again. However, ephemerality is built into the network, so it's understood
+        // that messages won't always make it. With our rudeness checking on, maybe
+        // it's best not to queue up messages before sending, and just send when
+        // we're connected.
+        // connection.peer.write(JSON.stringify(toBroadcast))
+        if (!connection.peer.connected) { continue }
+
+        // TODO Use this for checking how many active connections we have,
+        // or like network.activeConnections or something. Also can use the trick
+        // above with connection.negotiation.sdp
+        connection.peer.send(JSON.stringify(toBroadcast))
+        debug(5, 'sending', toBroadcast, 'to', connection.address)
+      } catch (e) {
+        debug(3, 'got error trying to send to', connection.address, e)
+      }
+    }
+
+    this._emit('broadcast-message', toBroadcast)
   }
 
   // List of all our current connections
@@ -225,7 +267,7 @@ export default class Network {
     if (address) {
       const connection = this.getConnectionByAddress(address)
       if (!connection) { return }
-      this.broadcast({
+      this._broadcastInternal({
         type: 'log',
         appId: APP_ID,
         data: 'rude',
@@ -260,39 +302,6 @@ export default class Network {
     delete this._garbageCollectInterval
   }
 
-  // Send message to all our connections
-  // TODO Fold this into broadcast
-  private broadcastMessage(message: Message) {
-    // TODO make helpers for this
-    this._seenMessageIds[message.id] = Date.now()
-
-    for (const connection of this.connections()) {
-      // This means this is a pending connection, we don't want to send
-      // anything over that.
-      if (!connection.negotiation.sdp) { continue }
-
-      try {
-        // The difference between write and send is that write queues, send
-        // throws if it's not writable yet. Previously there was a race
-        // condition here leading to many initial connections when
-        // using write. Once we removed the asynchronicity from connection
-        // creation, that race condition went away and we're free to use .write
-        // again. However, ephemerality is built into the network, so it's understood
-        // that messages won't always make it. With our rudeness checking on, maybe
-        // it's best not to queue up messages before sending, and just send when
-        // we're connected.
-        // connection.peer.write(JSON.stringify(message))
-        if (!connection.peer.connected) { continue }
-        connection.peer.send(JSON.stringify(message))
-        debug(5, 'sending', message, 'to', connection.address)
-      } catch (e) {
-        debug(3, 'got error trying to send to', connection.address, e)
-      }
-    }
-
-    this._emit('broadcast-message', message)
-  }
-
   // Start a single round of switchboard requests. One round is
   // SWITCHBOARD_REQUEST_ITERATIONS requests sent up separated in time by
   // SWITCHBOARD_REQUEST_INTERVAL. However the requester has an onComplete
@@ -302,7 +311,7 @@ export default class Network {
   // TODO It's not a good scheme. Wide open for DoS.
   private beginSwitchboardRequestPeriod() {
     this.switchboardRequester.begin()
-    this.broadcast({
+    this._broadcastInternal({
       id: uuid(),
       appId: APP_ID,
       type: 'switchboard-volunteer',
@@ -434,7 +443,7 @@ export default class Network {
     // staying the same, we count the signatures to see how many hops the message
     // has taken.
     if (message.signatures.length < message.ttl) {
-      this.broadcast(message)
+      this._broadcastInternal(message)
     }
 
     this._emit('message', message)
@@ -445,7 +454,7 @@ export default class Network {
     if (!connection) { return }
 
     connection.on('sdp', () => {
-      this.broadcast({
+      this._broadcastInternal({
         ...connection.negotiation as t.AnswerNegotiation,
         appId: APP_ID,
         id: uuid(),
@@ -585,7 +594,7 @@ export default class Network {
       debug(2, 'CONNECT', connection.address)
 
       // Send a welcome log message for the warm fuzzies
-      this.broadcast({
+      this._broadcastInternal({
         type: 'log',
         address: this.address,
         appId: APP_ID,
@@ -719,7 +728,7 @@ export default class Network {
       }
     } as const
 
-    this.broadcast(offer)
+    this._broadcastInternal(offer)
   }
 
   private getConnectionByAddress(address: t.Address): Connection | undefined {
