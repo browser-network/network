@@ -142,6 +142,28 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     this._eventEmitter.emit(type, data)
   }
 
+  /**
+  * @description List of all our current connections, active and pending
+  */
+  connections(): Connection[] {
+    return Object.values(this._connections)
+  }
+
+  /**
+  * @description List all of our active connections
+  */
+  activeConnections(): Connection[] {
+    return this.connections().filter(con => {
+      return (
+        // Without sdp means we're pending
+        !!con.negotiation.sdp &&
+
+        // This is how simplePeer knows
+        con.peer.connected
+      )
+    })
+  }
+
   removeAllListeners = this._eventEmitter.removeAllListeners
 
   // Stop all listeners, intervals, and connections, so that a process running a network
@@ -201,11 +223,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     // TODO make helpers for this
     this._seenMessageIds[toBroadcast.id] = Date.now()
 
-    for (const connection of this.connections()) {
-      // This means this is a pending connection, we don't want to send
-      // anything over that.
-      if (!connection.negotiation.sdp) { continue }
-
+    for (const connection of this.activeConnections()) {
       try {
         // The difference between write and send is that write queues, send
         // throws if it's not writable yet. Previously there was a race
@@ -217,11 +235,6 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
         // it's best not to queue up messages before sending, and just send when
         // we're connected.
         // connection.peer.write(JSON.stringify(toBroadcast))
-        if (!connection.peer.connected) { continue }
-
-        // TODO Use this for checking how many active connections we have,
-        // or like network.activeConnections or something. Also can use the trick
-        // above with connection.negotiation.sdp
         connection.peer.send(JSON.stringify(toBroadcast))
         debug(5, 'sending', toBroadcast, 'to', connection.address)
       } catch (e) {
@@ -230,11 +243,6 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     }
 
     this._emit('broadcast-message', toBroadcast)
-  }
-
-  // List of all our current connections
-  connections(): Connection[] {
-    return Object.values(this._connections)
   }
 
   // Safely start it
