@@ -83,7 +83,7 @@ export default class SwitchboardService {
   }
 
   private async handleSwitchboardResponse(book: SwitchboardResponse) {
-    // if (!book) { return debug(1, 'got bad response from switchboard:', book) }
+    if (!book) { throw new Error('got bad response from switchboard') }
 
     for (const negotiation of book) {
       switch (negotiation.type) {
