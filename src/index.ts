@@ -75,8 +75,9 @@ type NetworkProps = {
   config?: Partial<NetworkConfig>
 }
 
-// TODO make _connections etc private
 // TODO explain how to use this UserMessage type
+// TODO Bring all the rude stuff under its own namespace
+// TODO make individual events for user's messages and all messages (fer easy typin')
 type MinimumMessage = Partial<Message> & { type: string, appId: string }
 export default class Network<UserMessage extends MinimumMessage = MinimumMessage> {
   config: NetworkConfig
@@ -86,15 +87,13 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   switchboardRequester: Repeater
   rudeIps: { [address: t.IPAddress]: t.TimeStamp } = {}
   behaviorCache: BehaviorCache
+
   private _secret: t.Secret
-
-  _connections: { [connectionId: t.GUID]: Connection } = {}
-  _seenMessageIds: { [id: t.GUID]: t.TimeStamp } = {}
-
-  _switchboardVolunteerDelayTimeout: ReturnType<typeof setTimeout>
-  _offerBroadcastInterval: ReturnType<typeof setInterval>
-  _garbageCollectInterval: ReturnType<typeof setInterval>
-
+  private _connections: { [connectionId: t.GUID]: Connection } = {}
+  private _seenMessageIds: { [id: t.GUID]: t.TimeStamp } = {}
+  private _switchboardVolunteerDelayTimeout: ReturnType<typeof setTimeout>
+  private _offerBroadcastInterval: ReturnType<typeof setInterval>
+  private _garbageCollectInterval: ReturnType<typeof setInterval>
   private _eventEmitter: EventEmitter = new EventEmitter()
 
   constructor({ secret, switchAddress, networkId, config = {} }: NetworkProps) {
