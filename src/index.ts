@@ -70,7 +70,7 @@ type NetworkProps = {
 // TODO make individual events for user's messages and all messages (fer easy typin')
 // TODO Change all comments to JSDoc
 // TODO Comment up hecka more stuff
-type MinimumMessage = Partial<Message> & { type: string, appId: string }
+type MinimumMessage = Partial<Message> & { type: Message['type'], appId: Message['appId'] }
 export default class Network<UserMessage extends MinimumMessage = MinimumMessage> {
   config: NetworkConfig
   address: t.Address
