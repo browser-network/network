@@ -1,5 +1,3 @@
-import axios from 'axios'
-
 // Tried using crypto.randomUUID() but browserify like 10x's the build
 // size to do it.
 import { v4 as uuid } from 'uuid'
@@ -16,12 +14,12 @@ import {
 } from './Message'
 
 import { debugFactory, exhaustive } from './util'
-import { Repeater } from './Repeater'
-import { NetworkConfig } from './NetworkConfig.d'
+import { NetworkConfig } from './NetworkConfig'
 import { Connection } from './Connection'
 import * as bnc from '@browser-network/crypto'
 import { EventEmitter } from 'events'
 import RudeList from './RudeList'
+import SwitchboardService from './SwitchboardService'
 
 // It's useful to have this so a user can nail down exactly the type
 // they're working with, like:
@@ -44,13 +42,6 @@ const APP_ID = 'network'
 // as a part of the network itself. It seems really fundamental to the shape of the
 // network, which is a concern of the network itself.
 const MEMORY_DURATION = 1000 * 60
-
-// This one as well seems fundamental to the shape of the network and I'm going to
-// leave it as a constant for now.
-const SWITCHBOARD_BACKOFF_DURATION = 1000 * 10
-
-// Same
-const SWITCHBOARD_REQUEST_ITERATIONS = Infinity
 
 // Object you pass in when instantiating a network
 type NetworkProps = {
@@ -77,13 +68,14 @@ type NetworkProps = {
 
 // TODO explain how to use this UserMessage type
 // TODO make individual events for user's messages and all messages (fer easy typin')
+// TODO Change all comments to JSDoc
+// TODO Comment up hecka more stuff
 type MinimumMessage = Partial<Message> & { type: string, appId: string }
 export default class Network<UserMessage extends MinimumMessage = MinimumMessage> {
   config: NetworkConfig
   address: t.Address
   networkId: t.NetworkId
-  switchAddress: t.SwitchAddress
-  switchboardRequester: Repeater
+  switchboardService: SwitchboardService
   rudeList: RudeList
 
   private _secret: t.Secret
@@ -106,24 +98,19 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       maxConnections: 10
     }, config)
 
-    this.switchAddress = switchAddress
+    this.switchboardService = new SwitchboardService({
+      networkId, switchAddress,
+      interval: this.config.switchboardRequestInterval,
+      onOffer: this.handleOfferNegotiation.bind(this),
+      onAnswer: this.handleAnswerNegotiation.bind(this),
+      onBook: (book) => this._emit('switchboard-response', book),
+      getOpenConnection: () => this.getOrGenerateOpenConnection()
+    }).start()
+
     this.networkId = networkId
     this.address = bnc.derivePubKey(secret)
     this.startOfferBroadcastInterval()
     this.startGarbageCollectionInterval()
-
-    // TODO We have yet to add logic for *when* to
-    // broadcast that we'll take on the requesting logic
-    // for a while. Or even if it's a good idea to implement
-    // this... it's just a DOS waiting to happen.
-    this.switchboardRequester = new Repeater({
-      func: this.doSwitchboardRequest.bind(this),
-      delay: this.config.switchboardRequestInterval,
-      numIterations: SWITCHBOARD_REQUEST_ITERATIONS,
-      onComplete: this.beginSwitchboardRequestPeriod.bind(this)
-    })
-
-    this.beginSwitchboardRequestPeriod()
 
     // This is our "good behavior" determination. The max message rate is
     // how many messages will we tolerate within a one second period from
@@ -160,7 +147,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   // Stop all listeners, intervals, and connections, so that a process running a network
   // can gracefully stop its own process.
   teardown() {
-    this.switchboardRequester.stop()
+    this.switchboardService.stop()
     this.stopOfferBroadcastInterval()
     this.stopGarbageCollectionInterval()
     clearTimeout(this._switchboardVolunteerDelayTimeout)
@@ -176,20 +163,22 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     this.removeAllListeners()
   }
 
-  // TODO: In nvim, when doing <leader>jk, there's sometimes a message that describes
-  // the method. Let's get that into there for this.
-  // The primary means of sending a message into the network for an application.
-  // You can pass in a union of your different message types for added type safety.
-  // Also, if you pass in custom message types to Network, like:
-  // new Network<{ type: 'hello', appId: string }>(...)
-  // then you can be sure when you broadcast you're obeying your own types
+  /**
+  * The primary means of sending a message into the network for an application.
+  * You can pass in a union of your different message types for added type safety.
+  * Also, if you pass in custom message types to Network, like:
+  * new Network<{ type: 'hello', appId: string }>(...)
+  * then you can be sure when you broadcast you're obeying your own types
+  */
   async broadcast(message: UserMessage) {
     this._broadcastInternal(message as Partial<Message> & { type: string, appId: string })
   }
 
-  // The purpose of having a broadcast separate from broadcast internal is one of typing.
-  // I'm allowing this since this app (Network) is the only app that uses Network that doesn't
-  // instantiate Network thereby giving it the instantiation time typing of UserMessage.
+  /**
+  * The purpose of having a broadcast separate from broadcast internal is one of typing.
+  * I'm allowing this since this app (Network) is the only app that uses Network that doesn't
+  * instantiate Network thereby giving it the instantiation time typing of UserMessage.
+  */
   private async _broadcastInternal(message: Partial<Message> & { type: string, appId: string }) {
     // required: type, appId
     if (!message.type || !message.appId) {
@@ -273,90 +262,6 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     delete this._garbageCollectInterval
   }
 
-  // Start a single round of switchboard requests. One round is
-  // SWITCHBOARD_REQUEST_ITERATIONS requests sent up separated in time by
-  // SWITCHBOARD_REQUEST_INTERVAL. However the requester has an onComplete
-  // which, ATTOW, is being used to make it switch indefinitely. Then,
-  // when we hear a switchboard-volunteer message like the one we just sent out,
-  // we back off for a little while.
-  // TODO It's not a good scheme. Wide open for DoS.
-  private beginSwitchboardRequestPeriod() {
-    this.switchboardRequester.begin()
-    this._broadcastInternal({
-      id: uuid(),
-      appId: APP_ID,
-      type: 'switchboard-volunteer',
-      destination: '*',
-      ttl: 2,
-      address: this.address,
-      data: {}
-    })
-  }
-
-  async doSwitchboardRequest() {
-    debug(5, 'doSwitchboardRequest')
-
-    const existingConnection = this.getOrGenerateOpenConnection()
-
-    // We don't want to send switchboard requests for pending connections
-    // TODO make a method for this
-    if (!existingConnection.negotiation.sdp) return
-
-    // Send our offer to switch
-    const resp = await this.sendNegotiationToSwitchingService({
-      address: this.address,
-      networkId: this.networkId,
-      connectionId: existingConnection.id,
-      ...(existingConnection.negotiation as t.Negotiation)
-    })
-
-    this.handleSwitchboardResponse(resp)
-  }
-
-  private async handleSwitchboardResponse(book: t.SwitchboardResponse) {
-    debug(5, 'handleSwitchboardResponse, book:', book)
-
-    if (!book) { return debug(1, 'got bad response from switchboard:', book) }
-
-    for (const negotiation of book) {
-      switch (negotiation.type) {
-        case 'offer':
-          const connection = this.handleOffer(negotiation)
-          if (!connection) { continue }
-
-          connection.on('sdp', () => {
-            this.sendNegotiationToSwitchingService({
-              connectionId: connection.id,
-              timestamp: Date.now(),
-              networkId: this.networkId,
-              ...(connection.negotiation as t.AnswerNegotiation)
-            })
-          })
-
-          break
-
-        case 'answer':
-          this.handleAnswer(negotiation)
-          break
-
-        default: exhaustive(negotiation, 'We got something from the switchboard that has a weird type'); break;;
-      }
-    }
-
-    this._emit('switchboard-response', book)
-  }
-
-  // TODO Pull this off the proto, along with the other switchboard stuff. These
-  // should be able to live entirely on their own class.
-  private async sendNegotiationToSwitchingService(negotiation: t.Negotiation): Promise<t.SwitchboardResponse> {
-    try {
-      const res = await axios.post(this.switchAddress, negotiation)
-      return res.data
-    } catch (e) {
-      debug(4, 'error w/ switch:', e)
-    }
-  }
-
   private async handleMessage(message: Message) {
     // If we've already seen this message, we do nothing
     // with it.
@@ -421,7 +326,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   }
 
   private handleOfferMessage(message: OfferMessage) {
-    const connection = this.handleOffer(message.data)
+    const connection = this.handleOfferNegotiation(message.data)
     if (!connection) { return }
 
     connection.on('sdp', () => {
@@ -441,7 +346,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   }
 
   private handleAnswerMessage(message: AnswerMessage) {
-    this.handleAnswer(message.data)
+    this.handleAnswerNegotiation(message.data)
   }
 
   private handleLogMessage(message: LogMessage) {
@@ -458,13 +363,10 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     }
 
     debug(3, 'heard switchboard volunteer, backing off switchboard requests:', message.address)
-    this.switchboardRequester.stop()
-    if (this._switchboardVolunteerDelayTimeout) { clearTimeout(this._switchboardVolunteerDelayTimeout) }
-    this._switchboardVolunteerDelayTimeout = setTimeout(this.beginSwitchboardRequestPeriod.bind(this), SWITCHBOARD_BACKOFF_DURATION + Math.random() * 1000)
   }
 
   // handleAnswer assumes it's getting an answer for an open offer of ours.
-  private handleAnswer(answer: t.AnswerNegotiation): void {
+  private handleAnswerNegotiation(answer: t.AnswerNegotiation): void {
     const connection = this._connections[answer.connectionId]
 
     // We may have retired this connection; or
@@ -490,7 +392,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     connection.signal(answer)
   }
 
-  private handleOffer(offer: t.OfferNegotiation): Connection | null {
+  private handleOfferNegotiation(offer: t.OfferNegotiation): Connection | null {
     // We're only concerned with offers from others
     // we're not already connected to, who are not on
     // our rude list, and if we aren't already maxed out.

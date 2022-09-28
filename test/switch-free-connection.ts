@@ -35,7 +35,7 @@ tap.test(`A and B join, A stops switchboard, C joins, and is eventually connecte
     t.end()
   })
 
-  networkA.switchboardRequester.stop()
+  networkA.switchboardService.stop()
 
   const networkC = new Network({
     switchAddress, networkId,

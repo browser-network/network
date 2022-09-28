@@ -13,7 +13,7 @@ export type Message<T = any> = {
   id: t.GUID
   address: t.Address // source address
   appId: string
-  ttl: 0 | 1 | 2 | 3 | 4 | 5 | 6 // no infinite message loops!
+  ttl: 0 | 1 | 2 | 3 | 4 | 5 | 6
   type: string
   destination: t.Address | '*'
   data?: T

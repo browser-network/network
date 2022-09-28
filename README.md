@@ -91,8 +91,6 @@ that the network is self healing.
 
 There are various schemes in place for efficiency.
 
-- A switchboard backoff scheme to _even further_ decrease switchboard resource
-  usage.
 - Message id memory so as not to repeat rebroadcasts of messages
 - A rude list. If you get on the rude list, you get dropped and blocked.
 - Connection garbage collection. WebRTC connections are unstable. A garbage
