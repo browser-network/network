@@ -15,13 +15,13 @@ import {
   LogMessage
 } from './Message'
 
-import { debugFactory, exhaustive, getIpFromRTCSDP } from './util'
+import { debugFactory, exhaustive } from './util'
 import { Repeater } from './Repeater'
-import BehaviorCache from './BehaviorCache'
 import { NetworkConfig } from './NetworkConfig.d'
 import { Connection } from './Connection'
 import * as bnc from '@browser-network/crypto'
 import { EventEmitter } from 'events'
+import RudeList from './RudeList'
 
 // It's useful to have this so a user can nail down exactly the type
 // they're working with, like:
@@ -76,7 +76,6 @@ type NetworkProps = {
 }
 
 // TODO explain how to use this UserMessage type
-// TODO Bring all the rude stuff under its own namespace
 // TODO make individual events for user's messages and all messages (fer easy typin')
 type MinimumMessage = Partial<Message> & { type: string, appId: string }
 export default class Network<UserMessage extends MinimumMessage = MinimumMessage> {
@@ -85,8 +84,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   networkId: t.NetworkId
   switchAddress: t.SwitchAddress
   switchboardRequester: Repeater
-  rudeIps: { [address: t.IPAddress]: t.TimeStamp } = {}
-  behaviorCache: BehaviorCache
+  rudeList: RudeList
 
   private _secret: t.Secret
   private _connections: { [connectionId: t.GUID]: Connection } = {}
@@ -130,7 +128,9 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     // This is our "good behavior" determination. The max message rate is
     // how many messages will we tolerate within a one second period from
     // a specific IP address before we consider that machine to be a rude fella.
-    this.behaviorCache = new BehaviorCache(this.config.maxMessageRateBeforeRude)
+    this.rudeList = new RudeList({
+      maxMessageRate: this.config.maxMessageRateBeforeRude
+    })
   }
 
   on(type: 'message', handler: (message: UserMessage & Message) => void): void
@@ -246,34 +246,6 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   // List of all our current connections
   connections(): Connection[] {
     return Object.values(this._connections)
-  }
-
-  // Given an offer/answer, do we have this person on our rude list.
-  // Makes it easy to tell whether we
-  isRude(ip: t.IPAddress): boolean {
-    return !!this.rudeIps[ip]
-  }
-
-  // Add an ip to a rude list, which means we won't connect to then any more.
-  // If an optional address is provided, and we're connected to that address,
-  // we'll drop them as well.
-  addToRudeList(ip: t.IPAddress, address?: t.Address) {
-    this.rudeIps[ip] = Date.now()
-
-    debug(1, 'added to rude list:', ip, address)
-
-    // We can check and make sure we're aren't / don't stay connected to this person
-    if (address) {
-      const connection = this.getConnectionByAddress(address)
-      if (!connection) { return }
-      this._broadcastInternal({
-        type: 'log',
-        appId: APP_ID,
-        data: 'rude',
-        destination: address
-      })
-      this.destroyConnection(connection)
-    }
   }
 
   // Safely start it
@@ -504,7 +476,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       // Somebody else already got to this open connection
       connection.address ||
       // The ip trying to connect is on our naughty list or not presenting an sdp string
-      !answer.sdp || this.isRude(getIpFromRTCSDP(answer.sdp)) ||
+      !answer.sdp || this.rudeList.isRude(answer.address) ||
       // We've reached our max number of allowed connections
       this.connections().length >= this.config.maxConnections
     ) { return null }
@@ -528,7 +500,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       // We're are already connected to this client
       !!this.getConnectionByAddress(offer.address) ||
       // They're on our rude list or not presenting an sdp string
-      !offer.sdp || this.isRude(getIpFromRTCSDP(offer.sdp)) ||
+      !offer.sdp || this.rudeList.isRude(offer.address) ||
       // We have the max number of connections
       this.connections().length >= this.config.maxConnections
     ) { return null }
@@ -609,13 +581,14 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     peer.on('data', (data: Uint8Array) => {
       const { address, negotiation } = connection
 
-      const peerAddress = getIpFromRTCSDP((negotiation as t.Negotiation).sdp)
+      this.rudeList.registerMessage(negotiation)
+
+      const peerAddress = negotiation.address
       debug(5, 'got message from:', peerAddress, address)
 
       // Ensure the machine on the other end of this connection is behaving themselves
-      if (!this.behaviorCache.isOnGoodBehavior(peerAddress)) {
-        debug(1, 'whoops, the machine belonging to', address, 'is exhibiting bad behavior!')
-        this.addToRudeList(peerAddress, address)
+      if (this.rudeList.isRude(peerAddress)) {
+        debug(5, 'whoops, the machine belonging to', address, 'is exhibiting bad behavior!')
         return
       }
 

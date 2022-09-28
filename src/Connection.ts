@@ -8,23 +8,31 @@ const debug = debugFactory('Connection')
 const IS_NODE = typeof process !== 'undefined'
 
 export class Connection extends EventEmitter {
-  // A unique ID created when the connection originally created, used to identify
-  // other node connections to facilitate more coordinated answer sending.
+  /**
+  * A unique ID created when the connection originally created, used to identify
+  * other node connections to facilitate more coordinated answer sending.
+  */
   id: t.GUID
 
-  // With whom is this connection established? If there is no address on the connection,
-  // that means it's an "open connection", one the node is keeping around and broadcasting
-  // connection information from in RTC "offer" form.
+  /**
+  * The public key crypto address of the connect. If there is no address on the connection,
+  * that means it's an "open connection", one the node is keeping around and broadcasting
+  * connection information from in RTC "offer" form.
+  */
   address?: t.Address
 
-  // This is a SimplePeer instance. This is how we do WebRTC connections, so the peer
-  // object is the actual p2p connection.
+  /**
+  * This is a SimplePeer instance. This is how we do WebRTC connections, so the peer
+  * object is the actual p2p connection.
+  */
   peer: Peer.Instance
 
-  // This is the most recent negotiation the connection has received. If this is an "offer"
-  // negotiation by us (with our address), it means this is our open connection. If it's an
-  // "answer" by us, it means we've responded to someone else's offer. If it's an answer
-  // from someone else, they've responded to our open offer.
+  /**
+  * This is the most recent negotiation the connection has received. If this is an "offer"
+  * negotiation by us (with our address), it means this is our open connection. If it's an
+  * "answer" by us, it means we've responded to someone else's offer. If it's an answer
+  * from someone else, they've responded to our open offer.
+  */
   negotiation: PendingNegotiation | Negotiation
 
   constructor(id: t.GUID, initiator: boolean, negotiation: PendingNegotiation) {
@@ -47,7 +55,9 @@ export class Connection extends EventEmitter {
     this.address = address
   }
 
-  // Safely signal a peer
+  /**
+  * Safely signal a peer
+  */
   signal(negotiation: Negotiation) {
     debug(5, 'signaling peer:', this.peer, negotiation)
     try {
