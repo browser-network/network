@@ -266,18 +266,6 @@ network.connections() // -> Connection[]
 
 See more about [the Connection type](src/Connection.d.ts)
 
----
-
-Network also gives you the means to add ip addresses to a "rude list". If someone
-makes it onto your rude list, you don't connect with them any more. Currently a machine
-will automatically be included in the rude list if it sends more messages than
-`config.maxMessageRateBeforeRude` in any given second.
-
-```ts
-network.addToRudeList('<ip address>')
-network.isRude('<ip address>') // -> boolean
-```
-
 ## Building
 
 If you're building with this project for the browser, the best way to build

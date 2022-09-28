@@ -94,7 +94,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       switchboardRequestInterval: 1000 * 3,
       garbageCollectInterval: 1000 * 5,
       respectSwitchboardVolunteerMessages: true,
-      maxMessageRateBeforeRude: 100,
+      maxMessageRateBeforeRude: Infinity,
       maxConnections: 10
     }, config)
 
