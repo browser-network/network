@@ -71,6 +71,11 @@ type NetworkProps = {
 // TODO Change all comments to JSDoc
 // TODO Comment up hecka more stuff
 type MinimumMessage = Partial<Message> & { type: Message['type'], appId: Message['appId'] }
+// TODO I want to do something like this, to tell the compiler that if the user's appId is
+// in the message they're receiving, then it's definitely their message, aka a UserMessage.
+// So after they do if (message.appId !== myAppId), assuming their appIds are narrower than string,
+// I want this to register that. Like:
+// If appId is in keyof UserMessage['appId'] : UserMessage ? Message
 export default class Network<UserMessage extends MinimumMessage = MinimumMessage> {
   config: NetworkConfig
   address: t.Address
@@ -126,12 +131,13 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     })
   }
 
-  on(type: 'message', handler: (message: UserMessage & Message) => void): void
-  on(type: 'broadcast-message', handler: (message: UserMessage & Message) => void): void
+  on(type: 'message', handler: (message: UserMessage & Message<unknown>) => void): void
+  on(type: 'broadcast-message', handler: (message: UserMessage & Message<unknown>) => void): void
   on(type: 'bad-message', handler: (message: any) => void): void
   on(type: 'add-connection', handler: (connection: Connection) => void): void
   on(type: 'destroy-connection', handler: (id: Connection['id']) => void): void
   on(type: 'switchboard-response', handler: (book: t.SwitchboardBook) => void): void
+  on(type: never, handler: never): void // Avoid 'switchboard-response' in error diagnostic windows, which is confusing
   on(type: string, handler: (data: any) => void) {
     this._eventEmitter.on(type, handler)
   }
