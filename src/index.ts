@@ -108,7 +108,13 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     }).start()
 
     this.networkId = networkId
-    this.address = bnc.derivePubKey(secret)
+
+    try {
+      this.address = bnc.derivePubKey(secret)
+    } catch (e) {
+      throw new Error("Whoops, can't derive address from secret. Was secret made using generateSecret()?")
+    }
+
     this.startOfferBroadcastInterval()
     this.startGarbageCollectionInterval()
 
