@@ -1,6 +1,5 @@
 import Network from '../../src'
 import { randomUUID } from 'crypto'
-import { generateSecret } from '@browser-network/crypto'
 import * as t from '../../src/types'
 
 // Give this an async function that returns true or false and a time limit.
@@ -28,6 +27,8 @@ export const ensureEventually = async (timeLimit: number, fn: () => boolean): Pr
 
 }
 
+type GenerateAddressInfo = () => { address: string } | { secret: string }
+
 // Housing of a network that all the tests can use. Because each test starting up its
 // own network takes an unnecessarily long time to accomplish.
 //
@@ -36,14 +37,13 @@ export const ensureEventually = async (timeLimit: number, fn: () => boolean): Pr
 export class Networks {
   nodes: Network[] = []
   startTime: number
-  maxStartupTime: number
+  maxStartupTime: number = 2 * 60 * 1000
   numConnections: number
   seenNetworkAddies: { [networkAddress: t.Address]: { [foreignAddress: t.Address]: true }} = {} // has that network seen messages yet
 
-  constructor(numConnections: number = 5, maxStartupTime: number = 2 * 60 * 1000) {
+  constructor(numConnections: number = 5, generateAddressInfo: GenerateAddressInfo) {
     this.startTime = Date.now()
     this.numConnections = numConnections
-    this.maxStartupTime = maxStartupTime
 
     const commonConfig = {
       networkId: randomUUID(),
@@ -54,7 +54,7 @@ export class Networks {
     for (let i = 0; i < this.numConnections; i++) {
       const network = new Network({
         ...commonConfig,
-        secret: generateSecret()
+        ...generateAddressInfo()
       })
 
       this.nodes.push(network)

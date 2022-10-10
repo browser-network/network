@@ -44,32 +44,48 @@ const APP_ID = 'network'
 const MEMORY_DURATION = 1000 * 60
 
 // Object you pass in when instantiating a network
-type NetworkProps = {
-  // The EC private key that identifies this node on the network. From this,
-  // the public key will be derived. That public key is used as the address
-  // of this node.
-  secret: t.Secret
-
-  // Identify the network we're working with. All nodes who are on this
-  // network are going to be receiving the same messages. So make the network
-  // id unique. Somewhat interestingly, it's only the switchboard that has to
-  // do with partitioning networks. It simply doesn't set up two nodes with
-  // different networkIds, and the networks never cross.
+type CommonNetworkProps = {
+  /**
+  * Identify the network we're working with. All nodes who are on this
+  * network are going to be receiving the same messages. So make the network
+  * id unique. Somewhat interestingly, it's only the switchboard that has to
+  * do with partitioning networks. It simply doesn't set up two nodes with
+  * different networkIds, and the networks never cross.
+  */
   networkId: t.NetworkId
 
-  // Where does the switchboard live? We'll be sending regular POST
-  // requests to it to initially get into the network and to onboard
-  // new folk into the network once we're already in.
+  /**
+  * Where does the switchboard live? We'll be sending regular POST
+  * requests to it to initially get into the network and to onboard
+  * new folk into the network once we're already in.
+  */
   switchAddress: t.SwitchAddress
 
-  // If nothing's passed in, the defaults will be used.
+  /**
+  * If nothing's passed in, the defaults will be used.
+  */
   config?: Partial<NetworkConfig>
 }
 
-// TODO explain how to use this UserMessage type
-// TODO make individual events for user's messages and all messages (fer easy typin')
-// TODO Change all comments to JSDoc
-// TODO Comment up hecka more stuff
+type SecureNetworkProps = CommonNetworkProps & {
+  /**
+  * The EC private key that identifies this node on the network. From this,
+  * the public key will be derived. That public key is used as the address
+  * of this node.
+  */
+  secret: t.Secret
+}
+
+type InsecureNetworkProps = CommonNetworkProps & {
+  /**
+  * @description An arbitrary string used as an identifying address. If this
+  * is passed in, it's not a secure network and no encryption will be used.
+  */
+  address: string
+}
+
+type NetworkProps = InsecureNetworkProps | SecureNetworkProps
+
 type MinimumMessage = Partial<Message> & { type: Message['type'], appId: Message['appId'] }
 // TODO I want to do something like this, to tell the compiler that if the user's appId is
 // in the message they're receiving, then it's definitely their message, aka a UserMessage.
@@ -91,8 +107,22 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   private _garbageCollectInterval: ReturnType<typeof setInterval>
   private _eventEmitter: EventEmitter = new EventEmitter()
 
-  constructor({ secret, switchAddress, networkId, config = {} }: NetworkProps) {
-    this._secret = secret
+  constructor(props: NetworkProps) {
+    const { networkId, switchAddress, config } = props
+
+    // Assign ourselves a secret or address. This'll determine whether we're running
+    // in message secure or insecure mode.
+    if ('secret' in props) {
+      this._secret = props.secret
+      try {
+        this.address = bnc.derivePubKey(props.secret)
+      } catch (e) {
+        throw new Error("Whoops, can't derive address from secret. Was secret made using generateSecret()?")
+      }
+    } else {
+      this.address = props.address
+    }
+
 
     this.config = Object.assign({
       offerBroadcastInterval: 1000 * 5,
@@ -114,12 +144,6 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
 
     this.networkId = networkId
 
-    try {
-      this.address = bnc.derivePubKey(secret)
-    } catch (e) {
-      throw new Error("Whoops, can't derive address from secret. Was secret made using generateSecret()?")
-    }
-
     this.startOfferBroadcastInterval()
     this.startGarbageCollectionInterval()
 
@@ -131,9 +155,22 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     })
   }
 
+  /**
+  * @description Listen for events happening on the network. These will be network internal
+  * events and messages from the network itself, libraries using the network, or your app,
+  * each differentiated via the 'appId' field.
+  *
+  * The events:
+  * 'message' - any message coming from a different node on the network
+  * 'broadcast-message' - fired any time this node broadcasts or rebroadcasts a message
+  * 'bad-message' - when this node receives a malformed message
+  * 'add-connection' - when this node connects to another
+  * 'destroy-connection' - when this node disconnects from another
+  * 'switchboard-response' - upon receiving a response from the switchboard
+  */
   on(type: 'message', handler: (message: UserMessage & Message<unknown>) => void): void
   on(type: 'broadcast-message', handler: (message: UserMessage & Message<unknown>) => void): void
-  on(type: 'bad-message', handler: (message: any) => void): void
+  on(type: 'bad-message', handler: (badMessage: any) => void): void
   on(type: 'add-connection', handler: (connection: Connection) => void): void
   on(type: 'destroy-connection', handler: (id: Connection['id']) => void): void
   on(type: 'switchboard-response', handler: (book: t.SwitchboardBook) => void): void
@@ -152,6 +189,20 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   private _emit(type: 'switchboard-response', book: t.SwitchboardBook): void
   private _emit(type: string, data: any) {
     this._eventEmitter.emit(type, data)
+  }
+
+  /**
+  * @description Delegated to native EventEmitter. Use this to stop listening to certain events.
+  */
+  removeListener(type: 'message', handler: Function): void
+  removeListener(type: 'broadcast-message', handler: Function): void
+  removeListener(type: 'bad-message', handler: Function): void
+  removeListener(type: 'add-connection', handler: Function): void
+  removeListener(type: 'destroy-connection', handler: Function): void
+  removeListener(type: 'switchboard-response', handler: Function): void
+  removeListener(type: never, handler: never): void // Avoid 'switchboard-response' in error diagnostic windows, which is confusing
+  removeListener(type: never, handler: never) {
+    this._eventEmitter.removeListener(type, handler)
   }
 
   /**
@@ -176,10 +227,10 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     })
   }
 
-  removeAllListeners = this._eventEmitter.removeAllListeners
-
-  // Stop all listeners, intervals, and connections, so that a process running a network
-  // can gracefully stop its own process.
+  /**
+  * Stop all listeners, intervals, and connections, so that a process running
+  * a network can gracefully stop its own process.
+  */
   teardown() {
     this.switchboardService.stop()
     this.stopOfferBroadcastInterval()
@@ -194,7 +245,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       delete this._connections[conId]
     }
 
-    this.removeAllListeners()
+    this._eventEmitter.removeAllListeners()
   }
 
   /**
@@ -227,10 +278,19 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       signatures: []
     }, message)
 
-    toBroadcast.signatures.push({
-      signer: this.address,
-      signature: await bnc.sign(this._secret, toBroadcast)
-    })
+    if (this._secret) {
+      toBroadcast.signatures.push({
+        signer: this.address,
+        signature: await bnc.sign(this._secret, toBroadcast)
+      })
+    } else {
+      // If we're in insecure mode, we're still going to use the items in this
+      // array to count how many times the message has bounced around.
+      toBroadcast.signatures.push({
+        signer: this.address,
+        signature: ''
+      })
+    }
 
     // TODO make helpers for this
     this._seenMessageIds[toBroadcast.id] = Date.now()
@@ -294,29 +354,32 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
 
     // Ensure the message is cryptographically sound
 
-    // Firstly, if there are no signatures, it is not sound.
-    if (message.signatures.length === 0) {
-      debug(3, 'received message with no signatures!', message)
-      this._emit('bad-message', message)
-    }
+    // Now, if we're in secure message mode, we go through each signature, in
+    // reverse order, popping it out as we go, ensuring each is valid for the
+    // resulting rest of the message.
+    if (this._secret) {
 
-    // Now we go through each signature, in reverse order, popping
-    // it out as we go, ensuring each is valid for the resulting
-    // rest of the message.
-    let signatures: Signature[] = []
-    while (message.signatures.length !== 0) {
-      const signature = message.signatures.pop()
-      signatures.unshift(signature)
-      const isValidSignature = await bnc.verifySignature(message, signature.signature, signature.signer)
-      if (!isValidSignature) {
-        debug(3, 'received message with unverifiable signature!', message)
+      // Firstly, if there are no signatures, it is not sound.
+      if (message.signatures.length === 0) {
+        debug(3, 'received message with no signatures!', message)
         this._emit('bad-message', message)
-        return
       }
-    }
 
-    // Now we repair the mutation from above
-    message.signatures = signatures
+      let signatures: Signature[] = []
+      while (message.signatures.length !== 0) {
+        const signature = message.signatures.pop()
+        signatures.unshift(signature)
+        const isValidSignature = await bnc.verifySignature(message, signature.signature, signature.signer)
+        if (!isValidSignature) {
+          debug(3, 'received message with unverifiable signature!', message)
+          this._emit('bad-message', message)
+          return
+        }
+      }
+
+      // Now we repair the mutation from above
+      message.signatures = signatures
+    }
 
     // We are only interested in our own application here.
     // The network is actually an application on the network, lolz.
@@ -409,7 +472,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     connection.address = answer.address
 
     // Punch through that nat
-    connection.signal(answer)
+    connection._signal(answer)
   }
 
   private handleOfferNegotiation(offer: t.OfferNegotiation): Connection | null {
@@ -466,14 +529,14 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     }
 
     const connection = new Connection(uuid(), false, negotiation)
-    connection.signal(offer)
+    connection._signal(offer)
     return connection
   }
 
   private addConnection(connection: Connection, address?: t.Address) {
     // This always needs to happen when we add the connection to our pool,
     // lest we're adding an offer.
-    if (address) connection.registerAddress(address)
+    if (address) connection._registerAddress(address)
 
     this._connections[connection.id] = connection
     this.registerRTCEventHandlers(connection)

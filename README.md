@@ -68,6 +68,8 @@ What immediately comes to mind:
 
 * Cryptographic security - Network uses `eccrypto` to ensure veracity of messages.
   It's cryptographically difficult to spoof or modify a message that's not your own.
+  This feature can be turned on for more security or off for faster performance if
+  your network doesn't need to be secure.
 
 ### How it works
 
@@ -75,7 +77,7 @@ When you first open the webpage, the app does need some way to find at least
 one node on the network. So we have a [switching service](#the-switching-service).
 
 Once we connect to another node that's in a network (by we here, I mean a node,
-    if the reader will allow), then we'll start to hear [messages](#messages) from
+if the reader will allow), then we'll start to hear [messages](#messages) from
 our "neighbor" nodes, which is to say, those in the network we're directly
 connected to. The messages may originally come from those neighbors or they may not. Each
 message has a ttl (time to live). If we receive a message with a ttl > 1, we decrement it and
@@ -96,7 +98,7 @@ There are various schemes in place for efficiency.
 - Connection garbage collection. WebRTC connections are unstable. A garbage
   collector periodically cleans bad connections making room for new ones.
 - Tunable max connections - dial up or down the max number of connections you want
-  to have in real time. Network will won't make any new connections while there
+  to have in real time. Network won't make any new connections while there
   are more than that setting (`config.maxConnections`).
 
 ### The Switching Service
@@ -142,12 +144,11 @@ messages in the browser console.
 <html lang="en">
   <body>
     <script src="//unpkg.com/@browser-network/network/umd/network.min.js"></script>
-    <script src="//unpkg.com/@browser-network/crypto/umd/crypto.min.js"></script>
     <script>
 
       const network = window.network = new Network.default({
         switchAddress: 'http://localhost:5678', // Run npx `@browser-network/switchboard` to get this running locally
-        secret: Bnc.generateSecret(),
+        address: 'my-address-' + Date.now(), // Each window should have its own address, hence the Date.now()
         networkId: 'test-network' // Everyone using this id will receive messages from each other
       })
 
@@ -184,35 +185,66 @@ Then in one terminal:
 npx @browser-network/switchboard
 ```
 
-And in another, host your html file. I've always found this to be easiest:
-
-```sh
-python -m SimpleHTTPServer
-```
-
-Now navigate to `localhost:8000` or whatever port you're hosting it on, with
-a few browser windows, and you'll soon start to see messages being passed back
-and forth.
+And in at least two more, open your html file. You should start to see messages being
+passed back and forth in the console.
 
 ## Usage
 
 First up, instantiate a Network.
 
 ```ts
+// If you're cool bringing Browserify into your build process, you can require
+// these straight up:
 import Network from '@browser-network/network'
-import Bnc from '@browser-network/network'
+import { generateSecret } from '@browser-network/crypto'
 
-// TODO Here doc all these config params and how to use UserMessage
-const network = new Network({
-  switchAddress: 'http://localhost:5678', // default address of switchboard
-  secret: Bnc.generateSecret(),
-  networkId: '<something unique but the same b/t all your nodes>',
+// However, if you don't want to use Browserify in your build, and you're cool
+// with statically linking to these libraries (which means any libraries you and
+// Network share will be duplicated in your final build), you can do this, which
+// is what I normally do using Network:
+import type Network from '@browser-network/network'
+import type { generateSecret as GenerateSecret } from '@browser-network/crypto'
+
+const Net = require('@browser-network/network/umd/network').default as typeof Network
+const { generateSecret } = require('@browser-network/crypto/umd/crypto') as { generateSecret: typeof GenerateSecret }
+
+// One of the goals for this library is to be really nicely typed. As such, TypeScript
+// users can pass in what kind of messages they'll be sending/receiving, and the library
+// will help you out a ton when sending messages and receiving them. Note when you receive
+// a message, it'll always by of type `MyMessage & Message`, where `Message` is defined internally
+// in Network. It's exported for convenience.
+type MyMessages = {
+  type: 'hello-message',
+  data: { greet: 'Hello!' }
+  appId: 'my-app-id'
+} | {
+  type: 'goodbye-message',
+  data: { part: 'Goodbye :(' }
+  appId: 'my-app-id'
+}
+
+// `new Net` if you're statically linking Network, otherwise if you're importing like regular, `new Network`.
+const network = new Net<MyMessages>({
+  // default address of switchboard
+  switchAddress: 'http://localhost:5678',
+
+  // By passing in secret instead of `address`, we're telling network to cryptographically ensure all messages
+  // against spoofing. For a less secure network but a little performance gain, pass in `address` instead, with
+  // a unique address per node.
+  secret: generateSecret(),
+
+  // This needs to be unique enough to avoid collisions between different apps. If your `networkId`
+  // is the same as some other app that's using the same switchboard, the two apps will start to
+  // hear each other's messages!
+  networkId: 'a87wyr-awfhoiaw7yr-3hikauweawef-ryaiw73yriawrh-faweflawe',
+
+  // See more below...
   config:{
     offerBroadcastInterval: 1000 * 5,
     switchboardRequestInterval: 1000 * 5,
     garbageCollectInterval: 1000 * 5,
-    respectSwitchboardVolunteerMessages: true,
-    maxMessageRateBeforeRude: 100,
+    respectSwitchboardVolunteerMessages: false,
+    maxMessageRateBeforeRude: 1000,
     maxConnections: 10
   }
 })
@@ -226,16 +258,27 @@ Network is essentially a message event emitter, so listening for messages will
 be your main interaction with the network.
 
 ```ts
-network.on('message', (message) => {
+...
+
+network.on('message', (mes) => {
   // You'll usually want to ensure the message is for your app. It's
   // just a way to namespace your messages amongst the sea of other
   // messages on the network.
-  if (message.appId !== myAppId) return
+  if (mes.appId !== myAppId) return
 
-  // message is of type Message
+  // Now you can specify that this message is one of yours. I'd like this to
+  // be a little cleaner and not require this specification, but the lack of runtime types
+  // makes it hard:
+  const message = mes as MyMessage // MyMessage is declared above
+
   switch (message.type) {
-    case 'my-message': {
-      ...
+    case 'hello-message': {
+      console.log(message.data.greet)
+      break
+    }
+    case 'goodbye-message': {
+      console.log(message.data.part)
+      break
     }
   }
 })
@@ -247,9 +290,9 @@ Aside from listening to messages, you'll of course also want to send messages:
 
 ```ts
 network.broadcast({
-  type: '<whatever type>',
-  appId: '<your hard coded app id>',
-  data: { anything: 'here' },
+  type: 'hello-message',
+  appId: 'my-app-id',
+  data: { greet: 'Hello!' }
 })
 ```
 

@@ -9,10 +9,6 @@ export const debugFactory = (appName: string) => {
   }
 }
 
-export const isPromise = (promise: any) => {
-  return promise.hasOwnProperty('then')
-}
-
 export const exhaustive = (_: never, errorStr = 'Something unexpected happened and we got errantly to a default case in a switch'): never => {
   throw new Error(errorStr)
 }

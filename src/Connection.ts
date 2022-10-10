@@ -51,14 +51,18 @@ export class Connection extends EventEmitter {
     })
   }
 
-  registerAddress(address: t.Address) {
+  /**
+  * @description Assign an address to this connection. This is meant to be called only
+  * from Network.
+  */
+  _registerAddress(address: t.Address) {
     this.address = address
   }
 
   /**
-  * Safely signal a peer
+  * Safely signal a peer This is only meant to be called from Network.
   */
-  signal(negotiation: Negotiation) {
+  _signal(negotiation: Negotiation) {
     debug(5, 'signaling peer:', this.peer, negotiation)
     try {
       this.peer.signal(negotiation)

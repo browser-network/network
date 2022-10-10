@@ -9,13 +9,14 @@
     "umd/**/*"
   ],
   "scripts": {
-    "test": "tap --ts --no-timeout --no-coverage test/*.ts",
     "clean": "shx rm -rf dist build umd; shx mkdir umd",
     "compile:ts": "tsc",
     "compile:pack": "browserify dist/src/index.js -o umd/network.js -s Network",
     "compile:pack:min": "uglifyjs umd/network.js --compress -o umd/network.min.js",
     "build": "npm run clean; npm-run-all compile:**",
     "build:watch": "nodemon -e ts,json -i dist -i build -i umd -x 'npm run compile:ts && npm run compile:pack'",
+    "test": "tap --ts --no-timeout --no-coverage test/*.test.ts",
+    "test:watch": "nodemon -e ts -w test/ -x 'npm run test'",
     "start:dev": "node serve.js & npm run build:watch",
     "release": "npm run build && np --no-cleanup --no-tests --no-yarn --message=\"New release! Version: %s\""
   },

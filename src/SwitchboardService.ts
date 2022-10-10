@@ -64,7 +64,6 @@ export default class SwitchboardService {
 
     // Send our offer to switch
     const resp = await this.sendNegotiationToSwitchingService({
-      address: this.switchAddress,
       networkId: openConnection.negotiation.networkId,
       connectionId: openConnection.id,
       ...(openConnection.negotiation as Negotiation)
