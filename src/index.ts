@@ -514,7 +514,9 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       timestamp: Date.now()
     }
 
-    return new Connection(id, true, negotiation)
+    const connection = new Connection(id, true, negotiation)
+    this._emit('add-connection', connection)
+    return connection
   }
 
   private generateAnswerConnection(offer: t.OfferNegotiation): Connection {
@@ -531,9 +533,12 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
 
     const connection = new Connection(uuid(), false, negotiation)
     connection._signal(offer)
+    this._emit('add-connection', connection)
     return connection
   }
 
+  // TODO This is supes ambiguous. How come this exists but also sometimes we call
+  // new Connection without using this?
   private addConnection(connection: Connection, address?: t.Address) {
     // This always needs to happen when we add the connection to our pool,
     // lest we're adding an offer.
