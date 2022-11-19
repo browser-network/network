@@ -213,6 +213,8 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
 
   /**
   * @description List all of our active connections
+  *
+  * @todo Make this a getter - it doesn't make semantic sense for it to be a method
   */
   activeConnections(): Connection[] {
     return this.connections().filter(con => {

@@ -18,6 +18,11 @@ export class Connection extends EventEmitter {
   * The public key crypto address of the connect. If there is no address on the connection,
   * that means it's an "open connection", one the node is keeping around and broadcasting
   * connection information from in RTC "offer" form.
+  *
+  * If this connection is gotten via network.activeConnections(), this will definitely
+  * exist.
+  *
+  * @TODO create ActiveConnection type and make that what activeConnections() returns
   */
   address?: t.Address
 
