@@ -123,6 +123,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       this.address = props.address
     }
 
+    this.networkId = networkId
 
     this.config = Object.assign({
       offerBroadcastInterval: 1000 * 5,
@@ -141,8 +142,6 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       onBook: (book) => this._emit('switchboard-response', book),
       getOpenConnection: () => this.getOrGenerateOpenConnection()
     }).start()
-
-    this.networkId = networkId
 
     this.startOfferBroadcastInterval()
     this.startGarbageCollectionInterval()

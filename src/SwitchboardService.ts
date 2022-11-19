@@ -44,6 +44,7 @@ export default class SwitchboardService {
   * const sbs = new SwitchboardService({...}).start()
   */
   start = (): SwitchboardService => {
+    this.doSwitchboardRequest()
     this.requestTimer = setInterval(this.doSwitchboardRequest, this.interval)
     return this
   }
