@@ -1,4 +1,4 @@
-# Distributed Browser Network
+# Browser Network
 
 <img
   align='right'
@@ -6,21 +6,31 @@
   width=300
   src='https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/4-connected_graph.svg/800px-4-connected_graph.svg.png'>
 
-A WebRTC based direct peer to peer network between WebRTC enabled clients.
+### A direct peer to peer network between browser windows
 
 The Network is a peer to peer, decentralized, browser based
 network. It uses WebRTC to connect directly from browser to browser.
 Every browser window connects to many others, creating a robust network
 through which messages can be sent.
 
-The goal of this project is to enable easy to use, truly serverless app development.
+---
 
-The Network can be installed via
+### The goal
+#### to enable easy to use, truly serverless app development, that:
+* Does not rely on the concept of a coin or token to incentivise network participation
+  > Using the app _is_ participating in the network.
+* Is not compute resource intensive
+  > There's nothing to mine.
+* Makes no assumptions about node uptime
+  > The network is designed to have an arbitrary number of nodes come up and down for an arbitrary length of time
+
+The Network can be dropped into any web app via
 [npm](//npmjs.org/package/@browser-network/network) or
-[cdn](//unpkg.com/@browser-network/network/umd/network.min.js) and dropped into
-any web app and the app will become an interconnected network of all the users
-who currently have the app open.
+[cdn](//unpkg.com/@browser-network/network/umd/network.min.js) and the app will
+become an interconnected network of all the users who currently have the app
+open.
 
+### What can be done with it
 A million and one things can be done with such a network. The original impetus
 for writing this was to create a [decentralized database of
 sorts](//github.com/browser-network/database) to enable truly serverless real
@@ -319,6 +329,11 @@ See the [package.json](./package.json) for how this project builds for CDN vs
 ESM library style.
 
 TODO
+* ATTOW connecting takes 10-15 seconds. However, using raw RTC in the browser (via
+  `const r = new RTCPeerConnection({'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}]}); r.createOffer().then(console.log)`
+  ), the offer comes almost immediately. If this can be figured out, the main issue
+  with this library can be solved. That coupled with rapid switchboard messaging when
+  no active connections can probably bring connection time down to a second or two.
 * Better switching service backoff scheme
 * Conditional messaging - a preflight is sent before sending a bigger message
   asking if a node wants to accept it. A broken boundary is rude.
@@ -329,3 +344,4 @@ TODO
   just go ahead and send directly to that address instead of broadcasting to everyone.
 * Log message config param - toggle for whether to respect log messages. Might be
   a security vulnerability.
+
