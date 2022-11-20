@@ -15,7 +15,7 @@ through which messages can be sent.
 
 The goal of this project is to enable easy to use, truly serverless app development, that:
 * Does not rely on the concept of a coin or token to incentivise network participation
-  >> Using the app _is_ participating in the network.
+  > Using the app _is_ participating in the network.
 * Is not compute resource intensive
   >>
 * Makes no assumptions about node uptime
