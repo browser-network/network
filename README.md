@@ -1,4 +1,4 @@
-# Distributed Browser Network
+# Browser Network
 
 <img
   align='right'
@@ -6,7 +6,7 @@
   width=300
   src='https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/4-connected_graph.svg/800px-4-connected_graph.svg.png'>
 
-## A WebRTC based direct peer to peer network between browser windows.
+## A direct peer to peer network between browser windows
 
 The Network is a peer to peer, decentralized, browser based
 network. It uses WebRTC to connect directly from browser to browser.
