@@ -13,9 +13,12 @@ network. It uses WebRTC to connect directly from browser to browser.
 Every browser window connects to many others, creating a robust network
 through which messages can be sent.
 
-The goal of this project is to enable easy to use, truly serverless app development, that
-does not rely on the concept of a coin or token to incentivise network participation. Using
-the app _is_ network participation.
+The goal of this project is to enable easy to use, truly serverless app development, that:
+* Does not rely on the concept of a coin or token to incentivise network participation
+  >> Using the app _is_ participating in the network.
+* Is not compute resource intensive
+  >>
+* Makes no assumptions about node uptime
 
 The Network can be installed via
 [npm](//npmjs.org/package/@browser-network/network) or
