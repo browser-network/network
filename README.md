@@ -6,14 +6,16 @@
   width=300
   src='https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/4-connected_graph.svg/800px-4-connected_graph.svg.png'>
 
-A WebRTC based direct peer to peer network between WebRTC enabled clients.
+#### A WebRTC based direct peer to peer network between browser windows.
 
 The Network is a peer to peer, decentralized, browser based
 network. It uses WebRTC to connect directly from browser to browser.
 Every browser window connects to many others, creating a robust network
 through which messages can be sent.
 
-The goal of this project is to enable easy to use, truly serverless app development.
+The goal of this project is to enable easy to use, truly serverless app development, that
+does not rely on the concept of a coin or token to incentivise network participation. Using
+the app _is_ network participation.
 
 The Network can be installed via
 [npm](//npmjs.org/package/@browser-network/network) or
