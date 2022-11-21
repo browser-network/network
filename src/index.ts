@@ -20,6 +20,7 @@ import * as bnc from '@browser-network/crypto'
 import { EventEmitter } from 'events'
 import RudeList from './RudeList'
 import SwitchboardService from './SwitchboardService'
+import MessageMemory from './MessageMemory'
 
 // It's useful to have this so a user can nail down exactly the type
 // they're working with, like:
@@ -101,7 +102,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
 
   private _secret: t.Secret
   private _connections: { [connectionId: t.GUID]: Connection } = {}
-  private _seenMessageIds: { [id: t.GUID]: t.TimeStamp } = {}
+  private _messageMemory: MessageMemory = new MessageMemory(MEMORY_DURATION)
   private _switchboardVolunteerDelayTimeout: ReturnType<typeof setTimeout>
   private _offerBroadcastInterval: ReturnType<typeof setInterval>
   private _garbageCollectInterval: ReturnType<typeof setInterval>
@@ -294,7 +295,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     }
 
     // TODO make helpers for this
-    this._seenMessageIds[toBroadcast.id] = Date.now()
+    this._messageMemory.add(toBroadcast.id)
 
     for (const connection of this.activeConnections()) {
       try {
@@ -346,10 +347,10 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   private async handleMessage(message: Message) {
     // If we've already seen this message, we do nothing
     // with it.
-    if (this._seenMessageIds[message.id]) { return }
+    if (this._messageMemory.hasSeen(message.id)) { return }
 
     // Now we've seen this message.
-    this._seenMessageIds[message.id] = Date.now()
+    this._messageMemory.add(message.id)
 
     debug(5, 'handleMessage:', message)
 
@@ -605,13 +606,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   }
 
   private garbageCollectSeenMessages() {
-    for (const messageId in this._seenMessageIds) {
-      const timestamp = this._seenMessageIds[messageId]
-      if (Date.now() - timestamp > MEMORY_DURATION) {
-        debug(5, 'garbage collect messageId:', messageId)
-        delete this._seenMessageIds[messageId]
-      }
-    }
+    this._messageMemory.garbageCollect()
   }
 
   private garbageCollectConnections() {
