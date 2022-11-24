@@ -340,7 +340,6 @@ TODO
 * Conditional messaging - a preflight is sent before sending a bigger message
   asking if a node wants to accept it. A broken boundary is rude.
 * Tunable involvement parameters - allow network / disc usage to be modulated
-* Get rid of terrible custom debug implementation.
 * Assess how much of our inter peer data could be represented with buffers
 * if a broadcast is made with a specific address, and we're connected to that address,
   just go ahead and send directly to that address instead of broadcasting to everyone.

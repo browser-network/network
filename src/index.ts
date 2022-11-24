@@ -14,7 +14,7 @@ import {
   PresenceMessage
 } from './Message'
 
-import { debugFactory, exhaustive } from './util'
+import { exhaustive } from './util'
 import { NetworkConfig } from './NetworkConfig'
 import { Connection, ConnectionFactory } from './Connection'
 import * as bnc from '@browser-network/crypto'
@@ -28,8 +28,6 @@ import MessageMemory from './MessageMemory'
 //
 // network.on('message', (message: Message<MyDataType>) => {})
 export type { Message }
-
-const debug = debugFactory('Network')
 
 // Every app, even including this network, needs a unique id to identify
 // messages coming over the network. The only constraint is that you
@@ -120,8 +118,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       try {
         this.address = bnc.derivePubKey(props.secret)
       } catch (e) {
-        // TODO Where is generateSecret() located? Say it's from crypto
-        throw new Error("Whoops, can't derive address from secret. Was secret made using generateSecret()?")
+        throw new Error("Whoops, can't derive address from secret. Was secret made using browser network's crypto.generateSecret()?")
       }
     } else {
       this.address = props.address
@@ -220,7 +217,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   /**
   * @description List of all our current connections, active and pending
   */
-  connections(): Connection[] {
+  get connections(): Connection[] {
     return Object.values(this._connections)
   }
 
@@ -229,8 +226,8 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   *
   * @todo Make this a getter - it doesn't make semantic sense for it to be a method
   */
-  activeConnections(): Connection[] {
-    return this.connections().filter(con => {
+  get activeConnections(): Connection[] {
+    return this.connections.filter(con => {
       return (
         // The connection has its sdp information already
         con.state === 'connected' &&
@@ -250,7 +247,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     this.stopGarbageCollectionInterval()
     clearTimeout(this._switchboardVolunteerDelayTimeout)
 
-    for (let c of this.connections()) {
+    for (let c of this.connections) {
       this.destroyConnection(c)
     }
 
@@ -315,7 +312,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
 
     this._messageMemory.add(toBroadcast.id)
 
-    for (const connection of this.activeConnections()) {
+    for (const connection of this.activeConnections) {
       try {
         // The difference between write and send is that write queues, send
         // throws if it's not writable yet. Previously there was a race
@@ -328,9 +325,9 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
         // we're connected.
         // connection.peer.write(JSON.stringify(toBroadcast))
         connection.peer.send(JSON.stringify(toBroadcast))
-        debug(5, 'sending', toBroadcast, 'to', connection.address)
-      } catch (e) {
-        debug(3, 'got error trying to send to', connection.address, e)
+      } catch (error) {
+        const description = 'an error has occured attempted to broadcast a message to ' + connection.address
+        this._emit('connection-error', { description, error })
       }
     }
 
@@ -454,7 +451,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     ])
 
     // Call ourselves recursively so we can adjust the timing based on network state
-    const interval = this.activeConnections().length
+    const interval = this.activeConnections.length
       ? this.config.slowSwitchboardRequestInterval
       : this.config.fastSwitchboardRequestInterval
 
@@ -567,7 +564,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
 
     this._emit('connection-process', `fielding presence message from ${message.address}`)
 
-    const extentConnections = this.connections().filter(con => {
+    const extentConnections = this.connections.filter(con => {
       return con.address === message.address
     })
 
@@ -606,7 +603,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
 
     this._emit('connection-process', `received offer message from ${message.address}`)
 
-    const inactiveConnections = this.connections().filter(con => {
+    const inactiveConnections = this.connections.filter(con => {
       return con.address === message.address &&
         con.state !== 'connected'
     })
@@ -638,7 +635,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     // dont want to proceed.
     if (this.getActiveConnectionByAddress(message.address)) { return }
 
-    const connection = this.connections().find(con => {
+    const connection = this.connections.find(con => {
       return con.address === message.address && // for us
         con.state === 'open' && con.initiator && // open and ready for an answer
         con.id === message.data.connectionId // message was meant for this connection
@@ -661,11 +658,9 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
 
   private handleSwitchboardVolunteerMessage(message: SwitchboardVolunteerMessage) {
     if (!this.config.respectSwitchboardVolunteerMessages) {
-      debug(5, 'Switchboard Volunteer Message heard but feature is disabled. Heard from:', message.address)
+      console.info('Switchboard Volunteer Message heard but feature is disabled. Heard from:', message.address)
       return
     }
-
-    debug(3, 'heard switchboard volunteer, backing off switchboard requests:', message.address)
   }
 
   private registerConnection(connection: Connection) {
@@ -677,7 +672,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       // Let's take this opportunity to remove any other connections with the
       // same address that aren't connected. Keep the place clean. It's possible
       // for there to be duplicate connections made in the switchboard process.
-      this.connections().forEach(con => {
+      this.connections.forEach(con => {
         if (con.address === connection.address && con.id !== connection.id) {
           this.destroyConnection(con)
         }
@@ -744,11 +739,11 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
 
   // Get ANY connection we have, no matter the state it's in.
   private getConnectionByAddress(address: t.Address): Connection | undefined {
-    return this.connections().find(con => con.address === address)
+    return this.connections.find(con => con.address === address)
   }
 
   // Get only an active connection
   private getActiveConnectionByAddress(address: t.Address): Connection | undefined {
-    return this.connections().find(con => con.address === address && con.state === 'connected')
+    return this.connections.find(con => con.address === address && con.state === 'connected')
   }
 }

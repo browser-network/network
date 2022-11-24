@@ -21,13 +21,13 @@ export async function run(generateAddressInfo: GenerateAddressInfo) {
 
     // Disconnect from switchboard and nuke three out of its 5 connections
     network.stopSwitchboardRequests()
-    const severedConnectionAddress = network.activeConnections()[0].address
-    network.activeConnections()[0].peer.destroy()
+    const severedConnectionAddress = network.activeConnections[0].address
+    network.activeConnections[0].peer.destroy()
 
     const timeLimit = 3 * 60 * 1000
 
     await ensureEventually(timeLimit, () => {
-      return network.activeConnections().some(con => con.address === severedConnectionAddress)
+      return network.activeConnections.some(con => con.address === severedConnectionAddress)
     })
 
   })

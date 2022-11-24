@@ -1,7 +1,6 @@
 import axios from "axios"
 import * as t from "./types"
 
-// New
 type SwitchboardServiceProps = {
   switchAddress: t.SwitchAddress
   networkId: t.NetworkId
