@@ -1,6 +1,5 @@
 import Network from '../../src'
 import { randomUUID } from 'crypto'
-import * as t from '../../src/types'
 
 // Give this an async function that returns true or false and a time limit.
 // If your fn doesn't return true by the time timeLimit ellapses, reject.
@@ -38,58 +37,37 @@ export class Networks {
   nodes: Network[] = []
   startTime: number
   maxStartupTime: number = 2 * 60 * 1000
-  numConnections: number
-  seenNetworkAddies: { [networkAddress: t.Address]: { [foreignAddress: t.Address]: true }} = {} // has that network seen messages yet
+  numNodes: number
 
-  constructor(numConnections: number = 5, generateAddressInfo: GenerateAddressInfo) {
+  constructor(numNodes: number = 5, generateAddressInfo: GenerateAddressInfo) {
     this.startTime = Date.now()
-    this.numConnections = numConnections
+    this.numNodes = numNodes
 
     const commonConfig = {
       networkId: randomUUID(),
       switchAddress: 'http://localhost:5678',
-      config: { respectSwitchboardVolunteerMessages: false }
+      config: {
+        respectSwitchboardVolunteerMessages: false,
+        fastSwitchboardRequestInterval: 3000,
+        slowSwitchboardRequestInterval: 3000
+      }
     }
 
-    for (let i = 0; i < this.numConnections; i++) {
+    for (let i = 0; i < this.numNodes; i++) {
       const network = new Network({
         ...commonConfig,
         ...generateAddressInfo()
       })
 
       this.nodes.push(network)
-
-      network.on('message', (message) => {
-        if (!this.seenNetworkAddies[network.address]) {
-          this.seenNetworkAddies[network.address] = {}
-        }
-
-        this.seenNetworkAddies[network.address][message.address] = true
-      })
-
     }
   }
 
-  // Has every network seen messages from every other network?
+  // Has every node seen messages from every other node?
   isReady(): boolean {
-    // First we ensure there are as many addresses in our seen book
-    // as we have nodes. That just means that node has heard at least
-    // one message.
-    if (Object.keys(this.seenNetworkAddies).length < this.numConnections) {
-      return false
-    }
-
-    // For each key, that key should exist in the value of every other key.
-    // That is to say, every node should have received messages from every
-    // other node.
-    for (const address in this.seenNetworkAddies) {
-      const addresses = Object.keys(this.seenNetworkAddies[address])
-      if (addresses.length < this.numConnections - 1) {
-        return false
-      }
-    }
-
-    return true
+    return this.nodes.every(node => {
+      return node.activeConnections().length === this.numNodes - 1
+    })
   }
 
   // usage: await networks.untilReady()
@@ -108,6 +86,4 @@ export class Networks {
       }, 1000)
     })
   }
-
-
 }

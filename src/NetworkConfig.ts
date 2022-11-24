@@ -3,25 +3,29 @@
 
 export type NetworkConfig = {
   /**
-  * How often to broadcast our offer message to the network.
-  * We always maintain a single open connection. We periodically
-  * send that connection's info to both the switching service and
-  * via a message into the network. If another node on the network
-  * who we are not yet connected to hears it, they will send back
-  * into the network a response. If we see that response, then we've
-  * just created a new connection with that person. Note that each response
-  * is specific to the original open connection and won't work with
-  * a different connection.
+  * How often to broadcast our presence to the network.
+  * Periodically we broadcast that we're on the network. If another party who's
+  * on the network who we don't share a connection with hears this, they will send us an
+  * offer message, to which we'll return an answer. This is how the network is self healing.
   */
-  offerBroadcastInterval: number
+  presenceBroadcastInterval: number
 
   /**
-  * How frequently do we POST to the switchboard
+  * How frequently do we POST to the switchboard when we have no active connections?
   * As above, we periodically send information about our open connection
   * to the switchboard service (github.com/browser-network/switchboard).
   * This option dictates how often we do that.
   */
-  switchboardRequestInterval: number
+  fastSwitchboardRequestInterval: number
+
+  /**
+  * How frequently do we POST to the switchboard when do have active connections?
+  * We can afford to be a lot slower once we're already in the network and save
+  * on bandwidth for ourselves and the switchboard. The node will connect to
+  * other nodes in the network primarily by inter network messages from here
+  * on out.
+  */
+  slowSwitchboardRequestInterval: number
 
   /**
   * How frequently do we run GC

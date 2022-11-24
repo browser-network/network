@@ -23,6 +23,11 @@ through which messages can be sent.
   > There's nothing to mine.
 * Makes no assumptions about node uptime
   > The network is designed to have an arbitrary number of nodes come up and down for an arbitrary length of time
+* Cryptographically secure messaging ensures against spoofing
+  > Messages are mathematically guaranteed to come from who they say they're from
+* Does not rely on websockets
+  > Therefore is not hampered by the switchboard's ability to simultaneously hold
+    many websocket connections.
 
 The Network can be dropped into any web app via
 [npm](//npmjs.org/package/@browser-network/network) or
@@ -53,6 +58,9 @@ What immediately comes to mind:
 * Self Healing - when a connection breaks, a node on the network establishes a
   new connection with another node. The network internally gossips WebRTC
   handshake information to (re)establish connections with disconnected nodes.
+
+* Lightening fast - the network establishes many connections usually within
+  one second of starting up.
 
 * The only external reliance is on a lightweight http only switching service
   which has a small resource footprint. Note it does not rely on websockets,
@@ -329,12 +337,6 @@ See the [package.json](./package.json) for how this project builds for CDN vs
 ESM library style.
 
 TODO
-* ATTOW connecting takes 10-15 seconds. However, using raw RTC in the browser (via
-  `const r = new RTCPeerConnection({'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}]}); r.createOffer().then(console.log)`
-  ), the offer comes almost immediately. If this can be figured out, the main issue
-  with this library can be solved. That coupled with rapid switchboard messaging when
-  no active connections can probably bring connection time down to a second or two.
-* Better switching service backoff scheme
 * Conditional messaging - a preflight is sent before sending a bigger message
   asking if a node wants to accept it. A broken boundary is rude.
 * Tunable involvement parameters - allow network / disc usage to be modulated

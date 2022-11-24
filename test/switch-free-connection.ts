@@ -1,59 +1,34 @@
-import Network from '../src'
-import { randomUUID } from 'crypto'
 import tap from 'tap'
-import { ensureEventually } from './util'
+import { Networks, ensureEventually } from './util'
 
 type GenerateAddressInfo = () => { address: string } | { secret: string }
 
 export async function run(generateAddressInfo: GenerateAddressInfo) {
-  tap.test(`A and B join, A stops switchboard, C joins, and is eventually connected with A anyways`, async t => {
+  tap.test(`The network is able to connect via messages and not the switchboard`, async t => {
     t.teardown(() => {
       process.exit(0)
     })
 
+    const networks = new Networks(3, generateAddressInfo)
+
+    // networks.nodes[0].on('connection-error', console.log)
+    // networks.nodes[0].on('connection-process', console.log.bind(console, 'A'))
+
+    await networks.untilReady()
+
+    // This is the guy we're gonna fuck with
+    const network = networks.nodes[0]
+
+    // Disconnect from switchboard and nuke three out of its 5 connections
+    network.stopSwitchboardRequests()
+    const severedConnectionAddress = network.activeConnections()[0].address
+    network.activeConnections()[0].peer.destroy()
+
     const timeLimit = 3 * 60 * 1000
 
-    const networkId = randomUUID()
-    const switchAddress = 'http://localhost:5678'
-
-    const networkA = new Network(Object.assign({
-      switchAddress, networkId,
-      config: { respectSwitchboardVolunteerMessages: false },
-    }, generateAddressInfo()))
-
-    const networkB = new Network(Object.assign({
-      switchAddress, networkId,
-      config: { respectSwitchboardVolunteerMessages: false },
-    }, generateAddressInfo()))
-
     await ensureEventually(timeLimit, () => {
-      return networkA.connections().length === 2 &&
-        networkB.connections().length === 2
-    }).then(() => {
-      t.pass('A connected to B successfully')
-    }).catch(() => {
-      t.fail(`A did not connect to B after ${timeLimit / 1000} seconds`)
-      t.end()
+      return network.activeConnections().some(con => con.address === severedConnectionAddress)
     })
 
-    networkA.switchboardService.stop()
-
-    const networkC = new Network(Object.assign({
-      switchAddress, networkId,
-      config: { respectSwitchboardVolunteerMessages: false },
-    }, generateAddressInfo()))
-
-    await ensureEventually(timeLimit, () => {
-      return networkC.connections().some(con => {
-        return con.address === networkA.address &&
-          con.negotiation.type === 'answer' // so we know at least some exchange has happened.
-      })
-    }).then(() => {
-      t.pass('C connected to A')
-    }).catch(() => {
-      t.fail(`C received no messages from A after ${timeLimit / 1000} seconds`)
-    }).finally(() => {
-      t.end()
-    })
   })
 }

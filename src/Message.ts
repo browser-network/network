@@ -26,13 +26,21 @@ export type Signature = { signer: t.Address, signature: string }
 // Various forms of network specific messages
 
 /**
-* The regularly broadcast message that contains our open connection address
-* information.
+* @description Periodically we broadcast that we're on the network. If another party who's
+* on the network who we don't share a connection with hears this, they will send us an
+* offer message, to which we'll return an answer. This is how the network is self healing.
+*/
+export type PresenceMessage = Message<{ address: t.Address }> & { appId: string, type: 'presence' }
+
+/**
+* A message we craft in response to hearing a presence message from another party on
+* the network. This is the first stage in creating a connection with another party.
 */
 export type OfferMessage = Message<t.OfferNegotiation> & { appId: string, type: 'offer' }
 
 /**
-* The message we craft in response to an OfferMessage like above.
+* The message we craft in response to an OfferMessage like above. This is the second stage
+* in creating a connection with another party.
 */
 export type AnswerMessage = Message<t.AnswerNegotiation> & { appId: string, type: 'answer' }
 
@@ -57,6 +65,7 @@ export type LogMessage = Message<{ contents: string }> & { appId: string, type: 
 * Every message that supports Network as an app on Network
 */
 export type NetworkMessage =
+  PresenceMessage |
   OfferMessage |
   AnswerMessage |
   LogMessage |

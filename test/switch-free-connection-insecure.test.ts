@@ -1,6 +1,15 @@
-import { randomUUID } from 'crypto'
 import { run } from './switch-free-connection'
 
+// This so it looks nice and readable in the output
+function* generateNiceAddresses() {
+  const addies = ['A', 'B', 'C', 'D', 'E']
+  for (let a of addies) {
+    yield a
+  }
+}
+
+const generateNiceAddress = generateNiceAddresses()
+
 run(() => {
-  return { address: randomUUID() }
+  return { address: generateNiceAddress.next().value as string }
 })

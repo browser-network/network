@@ -10,12 +10,13 @@ import {
   OfferMessage,
   AnswerMessage,
   SwitchboardVolunteerMessage,
-  LogMessage
+  LogMessage,
+  PresenceMessage
 } from './Message'
 
 import { debugFactory, exhaustive } from './util'
 import { NetworkConfig } from './NetworkConfig'
-import { Connection } from './Connection'
+import { Connection, ConnectionFactory } from './Connection'
 import * as bnc from '@browser-network/crypto'
 import { EventEmitter } from 'events'
 import RudeList from './RudeList'
@@ -104,7 +105,8 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   private _connections: { [connectionId: t.GUID]: Connection } = {}
   private _messageMemory: MessageMemory = new MessageMemory(MEMORY_DURATION)
   private _switchboardVolunteerDelayTimeout: ReturnType<typeof setTimeout>
-  private _offerBroadcastInterval: ReturnType<typeof setInterval>
+  private _switchboardTimeout: ReturnType<typeof setTimeout>
+  private _presenceBroadcastInterval: ReturnType<typeof setInterval>
   private _garbageCollectInterval: ReturnType<typeof setInterval>
   private _eventEmitter: EventEmitter = new EventEmitter()
 
@@ -118,6 +120,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       try {
         this.address = bnc.derivePubKey(props.secret)
       } catch (e) {
+        // TODO Where is generateSecret() located? Say it's from crypto
         throw new Error("Whoops, can't derive address from secret. Was secret made using generateSecret()?")
       }
     } else {
@@ -127,8 +130,9 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     this.networkId = networkId
 
     this.config = Object.assign({
-      offerBroadcastInterval: 1000 * 5,
-      switchboardRequestInterval: 1000 * 3,
+      presenceBroadcastInterval: 1000 * 5,
+      fastSwitchboardRequestInterval: 500,
+      slowSwitchboardRequestInterval: 1000 * 3,
       garbageCollectInterval: 1000 * 5,
       respectSwitchboardVolunteerMessages: true,
       maxMessageRateBeforeRude: Infinity,
@@ -136,15 +140,13 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     }, config)
 
     this.switchboardService = new SwitchboardService({
-      networkId, switchAddress,
-      interval: this.config.switchboardRequestInterval,
-      onOffer: this.handleOfferNegotiation.bind(this),
-      onAnswer: this.handleAnswerNegotiation.bind(this),
-      onBook: (book) => this._emit('switchboard-response', book),
-      getOpenConnection: () => this.getOrGenerateOpenConnection()
-    }).start()
+      networkId, switchAddress, address: this.address
+    })
 
-    this.startOfferBroadcastInterval()
+    // Kick off the switchboard request process. Internally it will re-trigger itself.
+    this.doSwitchboardRequest()
+
+    this.startPresenceBroadcastInterval()
     this.startGarbageCollectionInterval()
 
     // This is our "good behavior" determination. The max message rate is
@@ -167,14 +169,20 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   * 'add-connection' - when this node connects to another
   * 'destroy-connection' - when this node disconnects from another
   * 'switchboard-response' - upon receiving a response from the switchboard
+  * 'connection-error' - when there's an RTC error this will be called. Usually follows up
+  * with the connection self destructing.
+  * 'connection-process' - Sometimes it's helpful to see what's happening in the connection
+  * process. This will come with a string description at various stages of connection.
   */
   on(type: 'message', handler: (message: UserMessage & Message<unknown>) => void): void
   on(type: 'broadcast-message', handler: (message: UserMessage & Message<unknown>) => void): void
   on(type: 'bad-message', handler: (badMessage: any) => void): void
   on(type: 'add-connection', handler: (connection: Connection) => void): void
   on(type: 'destroy-connection', handler: (id: Connection['id']) => void): void
-  on(type: 'switchboard-response', handler: (book: t.SwitchboardBook) => void): void
-  on(type: never, handler: never): void // Avoid 'switchboard-response' in error diagnostic windows, which is confusing
+  on(type: 'switchboard-response', handler: (book: t.SwitchboardResponse) => void): void
+  on(type: 'connection-error', handler: ({ description: string, error: Error }) => void): void
+  on(type: 'connection-process', handler: (description: string) => void): void
+  on(type: never, handler: never): void
   on(type: string, handler: (data: any) => void) {
     this._eventEmitter.on(type, handler)
   }
@@ -186,7 +194,9 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   private _emit(type: 'bad-message', message: Message): void
   private _emit(type: 'add-connection', connection: Connection): void
   private _emit(type: 'destroy-connection', id: Connection['id']): void
-  private _emit(type: 'switchboard-response', book: t.SwitchboardBook): void
+  private _emit(type: 'switchboard-response', book: t.SwitchboardResponse): void
+  private _emit(type: 'connection-error', { description: string, error: Error }): void
+  private _emit(type: 'connection-process', description: string): void
   private _emit(type: string, data: any) {
     this._eventEmitter.emit(type, data)
   }
@@ -200,7 +210,9 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   removeListener(type: 'add-connection', handler: Function): void
   removeListener(type: 'destroy-connection', handler: Function): void
   removeListener(type: 'switchboard-response', handler: Function): void
-  removeListener(type: never, handler: never): void // Avoid 'switchboard-response' in error diagnostic windows, which is confusing
+  removeListener(type: 'connection-error', handler: Function): void
+  removeListener(type: 'connection-process', handler: (description: string) => void): void
+  removeListener(type: never, handler: never): void
   removeListener(type: never, handler: never) {
     this._eventEmitter.removeListener(type, handler)
   }
@@ -220,8 +232,8 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   activeConnections(): Connection[] {
     return this.connections().filter(con => {
       return (
-        // Without sdp means we're pending
-        !!con.negotiation.sdp &&
+        // The connection has its sdp information already
+        con.state === 'connected' &&
 
         // This is how simplePeer knows
         con.peer.connected
@@ -234,8 +246,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   * a network can gracefully stop its own process.
   */
   teardown() {
-    this.switchboardService.stop()
-    this.stopOfferBroadcastInterval()
+    this.stopPresenceBroadcastInterval()
     this.stopGarbageCollectionInterval()
     clearTimeout(this._switchboardVolunteerDelayTimeout)
 
@@ -262,6 +273,14 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   }
 
   /**
+  * @description Stop hitting the switchboard for new connections. Connections will still
+  * be made via messages. To start the hitting the switchboard again, call doSwitchboardRequest().
+  */
+  stopSwitchboardRequests() {
+    clearTimeout(this._switchboardTimeout)
+  }
+
+  /**
   * The purpose of having a broadcast separate from broadcast internal is one of typing.
   * I'm allowing this since this app (Network) is the only app that uses Network that doesn't
   * instantiate Network thereby giving it the instantiation time typing of UserMessage.
@@ -277,7 +296,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       address: this.address,
       ttl: 6 as 5, // lol
       destination: '*',
-      signatures: []
+      signatures: [],
     }, message)
 
     if (this._secret) {
@@ -294,7 +313,6 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       })
     }
 
-    // TODO make helpers for this
     this._messageMemory.add(toBroadcast.id)
 
     for (const connection of this.activeConnections()) {
@@ -319,18 +337,153 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     this._emit('broadcast-message', toBroadcast)
   }
 
-  // Safely start it
-  private startOfferBroadcastInterval() {
-    if (this._offerBroadcastInterval) { return }
-    this._offerBroadcastInterval = setInterval(() => {
-      const openCon = this.getOrGenerateOpenConnection()
-      if (openCon.negotiation.sdp) this.broadcastOffer()
-    }, this.config.offerBroadcastInterval)
+  /**
+  * @description This is the main guy for communicating with the switchboard.
+  * Call this once and it'll recursively call itself indefinitely, on a timeout.
+  * That timeout is assigned based on network state:
+  *
+  * If there are no active connections, it'll make rapid requests. If there are
+  * active connections, it'll ease back and request more slowly. This enables really
+  * fast connection on startup, especially with empty networks, while preserving
+  * bandwidth for the clients and the switchboard.
+  *
+  * @TODO Currenty if it encounters an error, it won't get to the end and won't
+  * set itself up to be called again. This means a single problem with parsing
+  * or reaching the switchboard will permanently stop switchboard requests
+  * until the app is restarted or doSwitchboardRequest is called again.
+  */
+  private async doSwitchboardRequest() {
+    // First we send an 'empty' request, which is like a 'presence' message. It declares
+    // to the switchboard that we're here, and people can send us offers if they want.
+    const resp = await this.switchboardService.sendEmptyRequest()
+
+    this._emit('switchboard-response', resp)
+
+    const numOffers = resp.negotiationItems.filter(item => item.negotiation.type === 'offer').length
+    const numAnswers = resp.negotiationItems.filter(item => item.negotiation.type === 'answer').length
+    this._emit('connection-process', `received switchboard response with ${numOffers} offers and ${numAnswers} answers`)
+
+    // A response will have potentially offers for people who saw us, or answers
+    // for offers we've sent up.
+    // Upon getting a response:
+    // 1) Go through negotiationItems first:
+    //   * If we see an offer for us, we send up an answer
+    //   * If we see an answer for us, we signal it
+    // 2) Go through addresses:
+    //   * If we see one we don't have a connection for, create an offer, send it up.
+
+    const newAnswerConnections = resp.negotiationItems.map(item => {
+      // Create a new answer connection for each foreign offer
+      if (item.negotiation.type === 'offer') {
+
+        // If we have an active connection with a homie, we don't need to make another.
+        // However if it's not fully connected yet, we'll go ahead and make another
+        // connection to avoid "the offer loop", a situation that happens, mostly in
+        // tests, where both parties have an open offer to each other and therefore
+        // refuse to make another. Everybody just sits around with their open offer waiting
+        // for the other to do something. This way results in potential duplicate connections,
+        // but those can always be garbage collected, and better to be connected redundantly
+        // than not at all.
+        if (this.getActiveConnectionByAddress(item.from)) { return }
+
+        // Sometimes if both parties create an offer in the same go, they can get stuck
+        // in an offer loop whereby both are waiting for the other to make an answer.
+        // If we allow an answer to be made on both sides then maybe 2 connections will
+        // be made, but that's better than none.
+        this._emit('connection-process', `switchboard process: creating new non-initiator connection to ${item.from}`)
+
+        return ConnectionFactory.new({
+          networkId: this.networkId,
+          selfAddress: this.address,
+          foreignAddress: item.from,
+          suppliedOfferNegotiation: item.negotiation
+        })
+
+      } else {
+        // For answer negotiations, signal each one that's not fully connected
+        // We're kinda piggybacking in this loop
+        const con = this.getConnectionByAddress(item.from)
+        if (con?.state === 'open') {
+          this._emit('connection-process', `Signaling initiator connection to ${item.from}, connectionId: ${con.id}`)
+          con._handleAnswerNegotiation(item.negotiation)
+        }
+      }
+
+    }).filter(Boolean)
+
+    // Now we go through each address and create a new offer connection
+    const newOfferConnections = resp.addresses.map(address => {
+      // No sense in making an offer to ourselves
+      if (address === this.address) return
+
+      // Definitely don't want to send an offer to someone we're already connected to
+      if (this.getConnectionByAddress(address)) return
+
+      this._emit('connection-process', `switchboard process: creating new initiator connection to ${address}`)
+
+      return ConnectionFactory.new({
+        networkId: this.networkId,
+        selfAddress: this.address,
+        foreignAddress: address
+      })
+    }).filter(Boolean)
+
+    // All these are now in the 'open' state
+    const answerConnections = await Promise.all(newAnswerConnections)
+    const offerConnections = await Promise.all(newOfferConnections)
+
+    answerConnections.forEach(con => this.registerConnection(con))
+    offerConnections.forEach(con => this.registerConnection(con))
+
+    // Send our response negotiations back up. So clean,
+    // one request down and one up.
+    this.switchboardService.sendReturnRequest([
+      ...answerConnections.map(con => {
+        return {
+          for: con.address,
+          negotiation: con.answer
+        }
+      }),
+      ...offerConnections.map(con => {
+        return {
+          for: con.address,
+          negotiation: con.offer
+        }
+      })
+
+    ])
+
+    // Call ourselves recursively so we can adjust the timing based on network state
+    const interval = this.activeConnections().length
+      ? this.config.slowSwitchboardRequestInterval
+      : this.config.fastSwitchboardRequestInterval
+
+    this._switchboardTimeout = setTimeout(() => this.doSwitchboardRequest(), interval)
   }
 
-  private stopOfferBroadcastInterval() {
-    clearInterval(this._offerBroadcastInterval)
-    delete this._offerBroadcastInterval
+  // Safely start it
+  private startPresenceBroadcastInterval() {
+    if (this._presenceBroadcastInterval) { return }
+
+    // Stagger this a little bit. This helps in testing primarily when many
+    // tabs all restart at precisely the same time, a very rare race condition can
+    // happen whereby both parties create an initiator connection and send them
+    // to each other.
+    const interval = this.config.presenceBroadcastInterval + (Math.random() * 100)
+
+    this._presenceBroadcastInterval = setInterval(() => {
+      this._broadcastInternal({
+        type: 'presence',
+        appId: APP_ID,
+        destination: '*',
+        data: { address: this.address }
+      })
+    }, interval)
+  }
+
+  private stopPresenceBroadcastInterval() {
+    clearInterval(this._presenceBroadcastInterval)
+    delete this._presenceBroadcastInterval
   }
 
   // Safely start it
@@ -352,7 +505,8 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     // Now we've seen this message.
     this._messageMemory.add(message.id)
 
-    debug(5, 'handleMessage:', message)
+    // Only handle messages meant for either us or everybody
+    if (!['*', this.address].includes(message.destination)) { return }
 
     // Ensure the message is cryptographically sound
 
@@ -363,7 +517,6 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
 
       // Firstly, if there are no signatures, it is not sound.
       if (message.signatures.length === 0) {
-        debug(3, 'received message with no signatures!', message)
         this._emit('bad-message', message)
       }
 
@@ -373,7 +526,6 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
         signatures.unshift(signature)
         const isValidSignature = await bnc.verifySignature(message, signature.signature, signature.signer)
         if (!isValidSignature) {
-          debug(3, 'received message with unverifiable signature!', message)
           this._emit('bad-message', message)
           return
         }
@@ -391,11 +543,11 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     const massage = message as NetworkMessage
     if (message.appId === APP_ID) {
       switch (massage.type) {
-        case 'offer': this.handleOfferMessage(massage); break;;
-        case 'answer': this.handleAnswerMessage(massage); break;;
-        case 'log': this.handleLogMessage(massage); break;;
-        case 'switchboard-volunteer':
-          this.handleSwitchboardVolunteerMessage(massage); break;;
+        case 'presence': this.handlePresenceMessage(massage); break
+        case 'offer': this.handleOfferMessage(massage); break
+        case 'answer': this.handleAnswerMessage(massage); break
+        case 'log': this.handleLogMessage(massage); break
+        case 'switchboard-volunteer': this.handleSwitchboardVolunteerMessage(massage); break
         default: exhaustive(massage, 'Someone sent a message with our appId but of the wrong type!'); break;;
       }
     }
@@ -410,34 +562,100 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     this._emit('message', message)
   }
 
-  private handleOfferMessage(message: OfferMessage) {
-    const connection = this.handleOfferNegotiation(message.data)
-    if (!connection) { return }
+  private async handlePresenceMessage(message: PresenceMessage) {
+    if (this.getActiveConnectionByAddress(message.address)) { return }
 
-    connection.on('sdp', () => {
-      this._broadcastInternal({
-        ...connection.negotiation as t.AnswerNegotiation,
-        appId: APP_ID,
-        id: uuid(),
-        ttl: 6,
-        address: this.address,
-        destination: message.address,
-        data: {
-          connectionId: message.data.connectionId,
-        }
-      })
+    this._emit('connection-process', `fielding presence message from ${message.address}`)
+
+    const extentConnections = this.connections().filter(con => {
+      return con.address === message.address
     })
 
+    // If there are half open connections, we want to prioritize our own, because
+    // from here on out it's essentially instant to connect with another.
+    for (let con of extentConnections) {
+      if (con.state === 'connected') {
+        return // We already have a connection and don't need to go further
+      } else {
+        this._emit('connection-process', `destroying extent but inactive connection ${con.id.slice(0, 5)}... to ${con.address} in favor of new one`)
+        this.destroyConnection(con)
+      }
+    }
+
+    // If we've made it this far, we either are seeing a new person or we're
+    // hijacking the connection process from the slower switchboard.
+
+    // Create a new connection dedicated to this person
+    const connection = await ConnectionFactory.new({
+      networkId: this.networkId,
+      selfAddress: this.address,
+      foreignAddress: message.address
+    })
+
+    this.registerConnection(connection)
+
+    this._emit('connection-process', `broadcasting offer message to ${message.address}, connectionId: ${connection.id.slice(0, 5)}...`)
+    this._broadcastInternal({ appId: APP_ID, type: 'offer', data: connection.offer })
+  }
+
+  private async handleOfferMessage(message: OfferMessage) {
+    // If they've sent us an offer but we're already connected, let's ignore that
+    // in favor of the connection we already have. Dunno why they'd be sending an
+    // offer anyways.
+    if (this.getActiveConnectionByAddress(message.address)) { return }
+
+    this._emit('connection-process', `received offer message from ${message.address}`)
+
+    const inactiveConnections = this.connections().filter(con => {
+      return con.address === message.address &&
+        con.state !== 'connected'
+    })
+
+    // If we have existing non active connections for this person already, we'll let that one
+    // go in favor of creating one for this message. Messages create connections way faster
+    // than the switchboard, which these are assumed to be for.
+    inactiveConnections.forEach(con => {
+      this._emit('connection-process', `destroying extent but inactive connection ${con.id.slice(0, 5)}... to ${con.address} in favor of new one`)
+      this.destroyConnection(con)
+    })
+
+    const connection = await ConnectionFactory.new({
+      networkId: this.networkId,
+      selfAddress: this.address,
+      foreignAddress: message.address,
+      suppliedOfferNegotiation: message.data
+    })
+
+    this.registerConnection(connection)
+
+    this._emit('connection-process', `broadcasting answer message to ${message.address}, connectionId: ${connection.id.slice(0, 5)}...`)
+    this._broadcastInternal({ appId: APP_ID, type: 'answer', data: connection.answer })
   }
 
   private handleAnswerMessage(message: AnswerMessage) {
-    this.handleAnswerNegotiation(message.data)
+    // We only want to go through with this if we have a connection that is
+    // open and is the initiator. If there's an active connection already, we
+    // dont want to proceed.
+    if (this.getActiveConnectionByAddress(message.address)) { return }
+
+    const connection = this.connections().find(con => {
+      return con.address === message.address && // for us
+        con.state === 'open' && con.initiator && // open and ready for an answer
+        con.id === message.data.connectionId // message was meant for this connection
+    })
+
+    // If there's no connection here, it means somehow the answer message was sent
+    // to us in error or maybe after this connection expired.
+    if (!connection) { return }
+
+    this._emit('connection-process', `received answer message from and signaling to ${message.address}, connectionId: ${connection.id.slice(0, 5)}`)
+
+    // I think what's going on here is that we're calling _handleAnswerNegotiation
+    // for a connection that something else spawned, like, just not the right one.
+    connection._handleAnswerNegotiation(message.data)
   }
 
   private handleLogMessage(message: LogMessage) {
-    // Only log messages sent to us
-    if (!['*', this.address].includes(message.destination)) { return }
-
     console.log(message.address + ':', message.data.contents)
   }
 
@@ -450,111 +668,20 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     debug(3, 'heard switchboard volunteer, backing off switchboard requests:', message.address)
   }
 
-  // handleAnswer assumes it's getting an answer for an open offer of ours.
-  private handleAnswerNegotiation(answer: t.AnswerNegotiation): void {
-    const connection = this._connections[answer.connectionId]
-
-    // We may have retired this connection; or
-    // Somebody else may have already used it, or we don't
-    // want to connect to this person.
-    if (
-      // The connection's already been retired
-      !connection ||
-      // Somebody else already got to this open connection
-      connection.address ||
-      // The ip trying to connect is on our naughty list or not presenting an sdp string
-      !answer.sdp || this.rudeList.isRude(answer.address) ||
-      // We've reached our max number of allowed connections
-      this.connections().length >= this.config.maxConnections
-    ) { return null }
-
-    debug(3, 'handling answer:', answer)
-
-    // Now we know who is at the other end of the open offer we'd previously created.
-    connection.address = answer.address
-
-    // Punch through that nat
-    connection._signal(answer)
-  }
-
-  private handleOfferNegotiation(offer: t.OfferNegotiation): Connection | null {
-    // We're only concerned with offers from others
-    // we're not already connected to, who are not on
-    // our rude list, and if we aren't already maxed out.
-    if (
-      // It's ourselves
-      offer.address === this.address ||
-      // We're are already connected to this client
-      !!this.getConnectionByAddress(offer.address) ||
-      // They're on our rude list or not presenting an sdp string
-      !offer.sdp || this.rudeList.isRude(offer.address) ||
-      // We have the max number of connections
-      this.connections().length >= this.config.maxConnections
-    ) { return null }
-
-    // There's an offer in the book for a client to whom we're not connected.
-    debug(3, 'fielding an offer from', offer.address)
-
-    // Generate the answer response to peer's answer (new peer object)
-    // Always will be present b/c it's new
-    const connection = this.generateAnswerConnection(offer)
-    this.addConnection(connection, offer.address)
-
-    return connection
-  }
-
-  private generateOfferConnection(): Connection {
-    const id = uuid()
-
-    const negotiation: t.PendingNegotiation = {
-      type: 'offer',
-      address: this.address,
-      connectionId: id,
-      sdp: null,
-      networkId: this.networkId,
-      timestamp: Date.now()
-    }
-
-    const connection = new Connection(id, true, negotiation)
-    this._emit('add-connection', connection)
-    return connection
-  }
-
-  private generateAnswerConnection(offer: t.OfferNegotiation): Connection {
-    debug(5, 'generateAnswerConnection called for offer:', offer.address, offer.connectionId)
-
-    const negotiation: t.PendingNegotiation = {
-      type: 'answer',
-      address: this.address,
-      connectionId: offer.connectionId,
-      sdp: null,
-      networkId: this.networkId,
-      timestamp: Date.now()
-    }
-
-    const connection = new Connection(uuid(), false, negotiation)
-    connection._signal(offer)
-    this._emit('add-connection', connection)
-    return connection
-  }
-
-  // TODO This is supes ambiguous. How come this exists but also sometimes we call
-  // new Connection without using this?
-  private addConnection(connection: Connection, address?: t.Address) {
-    // This always needs to happen when we add the connection to our pool,
-    // lest we're adding an offer.
-    if (address) connection._registerAddress(address)
-
+  private registerConnection(connection: Connection) {
     this._connections[connection.id] = connection
-    this.registerRTCEventHandlers(connection)
 
-    this._emit('add-connection', connection)
-  }
+    connection.peer.on('connect', () => {
+      this._emit('add-connection', connection)
 
-  private registerRTCEventHandlers(connection: Connection) {
-    const { peer } = connection
-    peer.on('connect', () => {
-      debug(2, 'CONNECT', connection.address)
+      // Let's take this opportunity to remove any other connections with the
+      // same address that aren't connected. Keep the place clean. It's possible
+      // for there to be duplicate connections made in the switchboard process.
+      this.connections().forEach(con => {
+        if (con.address === connection.address && con.id !== connection.id) {
+          this.destroyConnection(con)
+        }
+      })
 
       // Send a welcome log message for the warm fuzzies
       this._broadcastInternal({
@@ -570,34 +697,20 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       })
     })
 
-    peer.on('data', (data: Uint8Array) => {
-      const { address, negotiation } = connection
-
-      this.rudeList.registerMessage(negotiation)
-
-      const peerAddress = negotiation.address
-      debug(5, 'got message from:', peerAddress, address)
-
-      // Ensure the machine on the other end of this connection is behaving themselves
-      if (this.rudeList.isRude(peerAddress)) {
-        debug(5, 'whoops, the machine belonging to', address, 'is exhibiting bad behavior!')
-        return
-      }
-
-      const str = data.toString()
-
-      let message: Message
-      try { message = JSON.parse(str) }
-      catch (e) { return debug(3, 'failed to parse message from', address + ':', str, e) }
-
+    connection.on('message', (message: Message) => {
+      // TODO Add rudelist here
+      // const { address, negotiation } = connection
+      // this.rudeList.registerMessage(connection.negotiation)
+      // if (this.rudeList.isRude(connection.address)) { ... }
       this.handleMessage(message)
     })
 
-    peer.on('close', () => { this.destroyConnection(connection) })
-
-    peer.on('end', () => { debug(5, 'p.on("end") fired for client', connection.address) })
-    peer.on('writable', () => { debug(5, 'p.on("writable") fired for client', connection.address) })
-    peer.on('error', (err: any) => { debug(4, `p.on(error) handler for ${connection.address}:`, err) })
+    connection.on('bad-message', (message: string) => console.error('Network received a malformed message:', message))
+    connection.peer.on('close', () => this.destroyConnection(connection))
+    connection.peer.on('error', (error: Error) => {
+      const description = `Error in connection with ${connection.address}. connectionId: ${connection.id}`
+      this._emit('connection-error', { description, error })
+    })
   }
 
   private garbageCollect() {
@@ -610,56 +723,17 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   }
 
   private garbageCollectConnections() {
-    // TODO we're keeping track of duplicate clients here so we can garbage collect the
-    // But it'd be better if we weren't having duplicate clients at all.
-    const seenAddresses = {}
-
-    // The actual garbage collection action
-    const collect = (connection: Connection) => {
-      debug(5, 'garbage collect connection:', connection)
-      this.destroyConnection(connection)
-    }
-
+    // Just go through and remove the ones that have been
+    // deemed unfit by SimplePeer
     for (const connectionId in this._connections) {
       const connection = this._connections[connectionId]
-      const { address, peer: { destroyed } } = connection
-      if (destroyed) {
-        return collect(connection)
+      if (connection.peer.destroyed) {
+        this.destroyConnection(connection)
       }
-
-      // After we clean destroyed connections, let's make sure we don't have any duplicates.
-      // Sometimes there are race conditions. The idea here is that if it wasn't destroyed,
-      // there's two valid connections, and we can remove one.
-      //
-      // Sometimes one node will have multiple connections pointing to
-      // the same neighbor and that neighbor will only have one. There's a difference in
-      // the two connections: One has a channelName and the other does not. If peer.channelName
-      // is null then that's the connection that should be removed. I think this is some race
-      // condition in SimplePeer. This will increase stability lots.
-      // Also I tried specifying manually the same channel name at Peer instantiation time,
-      // but that did not seem to have any effect.
-
-      // This reads "if we've seen this address already, assess if either of the connections
-      // have no channelName and remove it if it doesn't."
-      const seenConnectionId = seenAddresses[address]
-      if (seenConnectionId) {
-
-        // These two mean if either has no channelName, remove it.
-        // @ts-ignore -- not in the types, but not underscore prefixed..
-        if (connection.peer.channelName === null) {
-          return collect(connection)
-        }
-        // @ts-ignore
-        if (this._connections[seenConnectionId].peer.channelName === null) {
-          return collect(this._connections[seenConnectionId])
-        }
-      }
-      seenAddresses[address] = connection.id
     }
   }
 
   private destroyConnection(connection: Connection) {
-    debug(4, 'destroying connection', connection.address)
     const { peer } = connection
     peer.removeAllListeners()
     peer.end()
@@ -668,40 +742,13 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     this._emit('destroy-connection', connection.id)
   }
 
-  private broadcastOffer() {
-    const openConnection = this.getOrGenerateOpenConnection()
-
-    // We don't want to send messages about pending connections
-    if (!openConnection.negotiation.sdp) return
-
-    const offer = {
-      ttl: 6,
-      type: 'offer',
-      appId: APP_ID,
-      destination: '*',
-      data: {
-        timestamp: Date.now(),
-        connectionId: openConnection.id,
-        ...(openConnection.negotiation as t.OfferNegotiation)
-      }
-    } as const
-
-    this._broadcastInternal(offer)
-  }
-
+  // Get ANY connection we have, no matter the state it's in.
   private getConnectionByAddress(address: t.Address): Connection | undefined {
     return this.connections().find(con => con.address === address)
   }
 
-  // If we have an open connection in the pool, return that.
-  // Otherwise, generate an open connection.
-  private getOrGenerateOpenConnection(): Connection {
-    let oc = this.connections().find(con => !con.address)
-    if (!oc) {
-      oc = this.generateOfferConnection()
-      this.addConnection(oc)
-    }
-
-    return oc
+  // Get only an active connection
+  private getActiveConnectionByAddress(address: t.Address): Connection | undefined {
+    return this.connections().find(con => con.address === address && con.state === 'connected')
   }
 }

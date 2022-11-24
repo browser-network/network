@@ -11,16 +11,17 @@ export type Secret = string
 export type Address = PubKey
 export type NetworkId = string
 
-export type RTCOffer = {
+export type RTCOfferSdp = {
   type: 'offer'
   sdp: t.SDPString
 }
 
-export type RTCAnswer = {
+export type RTCAnswerSdp = {
   type: 'answer'
   sdp: t.SDPString
 }
 
+export type RTCSdp = RTCOfferSdp | RTCAnswerSdp
 
 export type NegotiationCommon = {
   address: t.Address
@@ -35,9 +36,18 @@ export type OfferNegotiation = { type: 'offer' } & NegotiationCommon
 export type AnswerNegotiation = { type: 'answer' } & NegotiationCommon
 export type Negotiation = OfferNegotiation | AnswerNegotiation
 
-// Briefly b/t Connection instantiation & 'signal' event
-export type PendingNegotiation = Negotiation & { sdp: null }
+export type PendingOfferNegotiation = OfferNegotiation & { sdp: null }
+export type PendingAnswerNegotiation = AnswerNegotiation & { sdp: null }
 
-export type SwitchboardBook = Negotiation[]
-export type SwitchboardResponse = SwitchboardBook | null
+// Briefly b/t Connection instantiation & 'signal' event
+export type PendingNegotiation = PendingOfferNegotiation | PendingAnswerNegotiation
+
+export type SwitchboardResponse = {
+  addresses: t.Address[] // all the addresses the switchboard has on book
+  negotiationItems: {
+    for: t.Address
+    from: t.Address
+    negotiation: t.Negotiation
+  }[]
+}
 
