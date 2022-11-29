@@ -390,9 +390,10 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
         })
 
       } else {
-        // For answer negotiations, signal each one that's not fully connected
+        // For answer negotiations, signal each one that's not fully connected and for which we
+        // have a connection.
         // We're kinda piggybacking in this loop
-        const con = this.getConnectionByAddress(item.from)
+        const con = this.connections.find(con => con.address === item.from && con.id === item.negotiation.connectionId)
         if (con?.state === 'open') {
           this._emit('connection-process', `Signaling initiator connection to ${item.from}, connectionId: ${con.id}`)
           con._handleAnswerNegotiation(item.negotiation)
