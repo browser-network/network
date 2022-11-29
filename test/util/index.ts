@@ -47,7 +47,6 @@ export class Networks {
       networkId: randomUUID(),
       switchAddress: 'http://localhost:5678',
       config: {
-        respectSwitchboardVolunteerMessages: false,
         fastSwitchboardRequestInterval: 3000,
         slowSwitchboardRequestInterval: 3000
       }
@@ -66,7 +65,7 @@ export class Networks {
   // Has every node seen messages from every other node?
   isReady(): boolean {
     return this.nodes.every(node => {
-      return node.activeConnections().length === this.numNodes - 1
+      return node.activeConnections.length === this.numNodes - 1
     })
   }
 

@@ -45,15 +45,6 @@ export type OfferMessage = Message<t.OfferNegotiation> & { appId: string, type: 
 export type AnswerMessage = Message<t.AnswerNegotiation> & { appId: string, type: 'answer' }
 
 /**
-* This message we will send into the network to tell everyone else that we are
-* going to take the next turn of regularly communicating with the switchboard for a spell.
-* If enabled, upon hearing this, the node will back off and stop sending switchboard requests
-* until the specified timeout has elapsed.
-*/
-export type SwitchboardVolunteerMessage = Message<{}> &
-  { appId: string, type: 'switchboard-volunteer', ttl: 2, destination: '*' }
-
-/**
 * This is a kind of holdover from early development days but still seems to be usefully
 * helping. The contents of this message will be logged to the console of whoever hears
 * it. It needs to be enabled via the config soas to not expose the entire console as an
@@ -68,7 +59,6 @@ export type NetworkMessage =
   PresenceMessage |
   OfferMessage |
   AnswerMessage |
-  LogMessage |
-  SwitchboardVolunteerMessage
+  LogMessage
 
 

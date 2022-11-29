@@ -261,7 +261,6 @@ const network = new Net<MyMessages>({
     offerBroadcastInterval: 1000 * 5,
     switchboardRequestInterval: 1000 * 5,
     garbageCollectInterval: 1000 * 5,
-    respectSwitchboardVolunteerMessages: false,
     maxMessageRateBeforeRude: 1000,
     maxConnections: 10
   }

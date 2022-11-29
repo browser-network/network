@@ -37,15 +37,6 @@ export type NetworkConfig = {
   garbageCollectInterval: number
 
   /**
-  * Do we stop sending messages to a switchboard if we get a volunteer message
-  * In an effort to further reduce the already minimal load to a switchboard,
-  * I've come up with a somewhat cocamamy scheme to have only one node on
-  * a network be hitting the switchboard at a time. The rest of the connections
-  * to the network come from the message level.
-  */
-  respectSwitchboardVolunteerMessages: boolean
-
-  /**
   * How often can a machine send us a message before we call them rude
   * We don't want to stay connected to a node that's misbehaving - sending us
   * bogus messages or spamming us. This option is for spamming. How many

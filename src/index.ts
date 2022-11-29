@@ -9,7 +9,6 @@ import {
   NetworkMessage,
   OfferMessage,
   AnswerMessage,
-  SwitchboardVolunteerMessage,
   LogMessage,
   PresenceMessage
 } from './Message'
@@ -102,7 +101,6 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   private _secret: t.Secret
   private _connections: { [connectionId: t.GUID]: Connection } = {}
   private _messageMemory: MessageMemory = new MessageMemory(MEMORY_DURATION)
-  private _switchboardVolunteerDelayTimeout: ReturnType<typeof setTimeout>
   private _switchboardTimeout: ReturnType<typeof setTimeout>
   private _presenceBroadcastInterval: ReturnType<typeof setInterval>
   private _garbageCollectInterval: ReturnType<typeof setInterval>
@@ -131,7 +129,6 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       fastSwitchboardRequestInterval: 500,
       slowSwitchboardRequestInterval: 1000 * 3,
       garbageCollectInterval: 1000 * 5,
-      respectSwitchboardVolunteerMessages: true,
       maxMessageRateBeforeRude: Infinity,
       maxConnections: 10
     }, config)
@@ -245,14 +242,10 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   teardown() {
     this.stopPresenceBroadcastInterval()
     this.stopGarbageCollectionInterval()
-    clearTimeout(this._switchboardVolunteerDelayTimeout)
+    this.stopSwitchboardRequests()
 
     for (let c of this.connections) {
       this.destroyConnection(c)
-    }
-
-    for (let conId in this._connections) {
-      delete this._connections[conId]
     }
 
     this._eventEmitter.removeAllListeners()
@@ -544,7 +537,6 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
         case 'offer': this.handleOfferMessage(massage); break
         case 'answer': this.handleAnswerMessage(massage); break
         case 'log': this.handleLogMessage(massage); break
-        case 'switchboard-volunteer': this.handleSwitchboardVolunteerMessage(massage); break
         default: exhaustive(massage, 'Someone sent a message with our appId but of the wrong type!'); break;;
       }
     }
@@ -654,13 +646,6 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
 
   private handleLogMessage(message: LogMessage) {
     console.log(message.address + ':', message.data.contents)
-  }
-
-  private handleSwitchboardVolunteerMessage(message: SwitchboardVolunteerMessage) {
-    if (!this.config.respectSwitchboardVolunteerMessages) {
-      console.info('Switchboard Volunteer Message heard but feature is disabled. Heard from:', message.address)
-      return
-    }
   }
 
   private registerConnection(connection: Connection) {
