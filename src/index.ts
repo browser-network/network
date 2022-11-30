@@ -382,6 +382,16 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
         // than not at all.
         if (this.getActiveConnectionByAddress(item.from)) { return }
 
+        // Update: For clarity, I'm leaving the above comment. However there was something
+        // wrong with that approach, too. Sometimes if two computers can't connect, like with old
+        // hardware that just won't allow an initiation, answers will pile up and get into the hundreds.
+        // So basically we prevented an "offer loop", but opened the gates for an "answer loop".
+        // So to prevent the answer loop, we'll check to see if there is already an open answer
+        // _for the connectionId in the offer_.
+        if (this.connections.find(con => con.initiator === false && con.answer!.connectionId === item.negotiation.connectionId)) {
+          return
+        }
+
         // Sometimes if both parties create an offer in the same go, they can get stuck
         // in an offer loop whereby both are waiting for the other to make an answer.
         // If we allow an answer to be made on both sides then maybe 2 connections will
