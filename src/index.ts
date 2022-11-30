@@ -130,7 +130,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       slowSwitchboardRequestInterval: 1000 * 3,
       garbageCollectInterval: 1000 * 5,
       maxMessageRateBeforeRude: Infinity,
-      maxConnections: 10
+      maxConnections: 5
     }, config)
 
     this.switchboardService = new SwitchboardService({
@@ -343,15 +343,21 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   * until the app is restarted or doSwitchboardRequest is called again.
   */
   private async doSwitchboardRequest() {
+    // Don't even do the request if we've already reached our max,
+    // Just schedule the next one and be on our way.
+    if (this.activeConnections.length >= this.config.maxConnections) {
+      this._switchboardTimeout = setTimeout(() => this.doSwitchboardRequest(), this.config.slowSwitchboardRequestInterval)
+      return
+    }
+
     // First we send an 'empty' request, which is like a 'presence' message. It declares
     // to the switchboard that we're here, and people can send us offers if they want.
     const resp = await this.switchboardService.sendEmptyRequest()
 
-    this._emit('switchboard-response', resp)
-
     const numOffers = resp.negotiationItems.filter(item => item.negotiation.type === 'offer').length
     const numAnswers = resp.negotiationItems.filter(item => item.negotiation.type === 'answer').length
     this._emit('connection-process', `received switchboard response with ${numOffers} offers and ${numAnswers} answers`)
+    this._emit('switchboard-response', resp)
 
     // A response will have potentially offers for people who saw us, or answers
     // for offers we've sent up.
@@ -553,6 +559,10 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   }
 
   private async handlePresenceMessage(message: PresenceMessage) {
+    // We don't care who's around if we've maxed out our connections
+    if (this.activeConnections.length >= this.config.maxConnections) { return }
+
+    // No need to do anything if we're already connected with this person
     if (this.getActiveConnectionByAddress(message.address)) { return }
 
     this._emit('connection-process', `fielding presence message from ${message.address}`)

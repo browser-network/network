@@ -23,10 +23,27 @@ export const ensureEventually = async (timeLimit: number, fn: () => boolean): Pr
 
     }, 1000)
   })
+}
 
+// This is like setting a timeout, but in promise form.
+// Because the test runner will not respect an extent timeout, even
+// if pass has not been called yet.
+// Use it like ensure that when the time limit is reached, the function returns true.
+export const ensureWhen = async (timeLimit: number, fn: () => boolean): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    setTimeout(() => {
+      const result = fn()
+      if (result) {
+        resolve()
+      } else {
+        reject()
+      }
+    }, timeLimit)
+  })
 }
 
 type GenerateAddressInfo = () => { address: string } | { secret: string }
+type PartialNetworkProps = Partial<ConstructorParameters<typeof Network>[0]>
 
 // Housing of a network that all the tests can use. Because each test starting up its
 // own network takes an unnecessarily long time to accomplish.
@@ -39,18 +56,18 @@ export class Networks {
   maxStartupTime: number = 2 * 60 * 1000
   numNodes: number
 
-  constructor(numNodes: number = 5, generateAddressInfo: GenerateAddressInfo) {
+  constructor(numNodes: number = 5, generateAddressInfo: GenerateAddressInfo, opts: PartialNetworkProps = {}) {
     this.startTime = Date.now()
     this.numNodes = numNodes
 
-    const commonConfig = {
+    const commonConfig = Object.assign({
       networkId: randomUUID(),
       switchAddress: 'http://localhost:5678',
       config: {
         fastSwitchboardRequestInterval: 3000,
         slowSwitchboardRequestInterval: 3000
       }
-    }
+    }, opts)
 
     for (let i = 0; i < this.numNodes; i++) {
       const network = new Network({

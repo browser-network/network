@@ -41,7 +41,8 @@ export type NetworkConfig = {
   * We don't want to stay connected to a node that's misbehaving - sending us
   * bogus messages or spamming us. This option is for spamming. How many
   * messages are we willing to accept from a node in one second before we consider them
-  * to be spamming us?
+  * to be spamming us? This defaults to Infinity, i.e. nobody will be considered rude
+  * no matter how frequently they send messages.
   */
   maxMessageRateBeforeRude: number
 
@@ -49,10 +50,9 @@ export type NetworkConfig = {
   * How many connections is a node allowed to have?
   * If this was set to Infinity, the network would be a "connected graph",
   * or a totally connected network where all nodes are connected to all other
-  * nodes. If this was set to 3, the network would be essentially linear.
+  * nodes. If this was set to 2, the network would be essentially linear.
   * However it also would be highly prone to partitions as geometric shapes would
-  * appear. Note this includes the ever present 'open connection', so if this is set
-  * to 2, the node will only want to find one other node to connect with.
+  * appear.
   */
   maxConnections: number
 }
