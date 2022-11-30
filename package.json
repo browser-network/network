@@ -1,6 +1,6 @@
 {
   "name": "@browser-network/network",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "A WebRTC based direct peer to peer network in the browser.",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
