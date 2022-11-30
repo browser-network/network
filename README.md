@@ -27,7 +27,12 @@ through which messages can be sent.
   > Messages are mathematically guaranteed to come from who they say they're from
 * Does not rely on websockets
   > Therefore is not hampered by the switchboard's ability to simultaneously hold
-    many websocket connections.
+    many websocket connections. This is a huge drawback of networks that do use
+    a websocket switchboard. The network can only be as big as that switchboard's
+    address space, and if the switchboard goes down, the network will start to fall
+    apart. They're still distributed networks, but they rely heavily on a single
+    server entity. This network still relies on a server switchboard, but its self
+    healing quality leads to a robust network even if the switchboard goes down.
 
 The Network can be dropped into any web app via
 [npm](//npmjs.org/package/@browser-network/network) or
@@ -344,4 +349,18 @@ TODO
   just go ahead and send directly to that address instead of broadcasting to everyone.
 * Log message config param - toggle for whether to respect log messages. Might be
   a security vulnerability.
-
+* Ability to export an offer/answer into an easily exchanged, reasonably sized string.
+  This would allow any switch at all to be used to create a connection, easily, breaking
+  the reliance on any specific switchboard.
+* Mask sdp information. Since we are sending sdp info to an address, we can use public key encryption
+  with a diffie helman key exchange to encrypt the sdp info so that only the destination address
+  can read it. Note that this is done, there should be a note about it specifically not being encrypted
+  in an insecure network. There are two instances right now where the network leaks IP
+  addresses within that big SDP string. The first is when two nodes are negotiating a connection via
+  messages on the network, everybody can see their IPs. This isn't that severe because
+  if you're joining the network, I guess you kind of expect to see other people's IPs.
+  However, it'll be more secure this way. The second is the switchboard currently has a feature
+  whereby you can get everything on the switchboard's books. This is super handy for dev
+  information but as it stands it leaks everybody's IP, even to people who aren't trying
+  to join the network. That endpoint should either be removed or the sdp info should be
+  encrypted.
