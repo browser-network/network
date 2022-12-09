@@ -126,8 +126,8 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
 
     this.config = Object.assign({
       presenceBroadcastInterval: 1000 * 5,
-      fastSwitchboardRequestInterval: 500,
-      slowSwitchboardRequestInterval: 1000 * 3,
+      fastSwitchboardRequestInterval: 1000 * 1,
+      slowSwitchboardRequestInterval: 1000 * 5,
       garbageCollectInterval: 1000 * 5,
       maxMessageRateBeforeRude: Infinity,
       maxConnections: 5
@@ -411,7 +411,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
         // We're kinda piggybacking in this loop
         const con = this.connections.find(con => con.address === item.from && con.id === item.negotiation.connectionId)
         if (con?.state === 'open') {
-          this._emit('connection-process', `Signaling initiator connection to ${item.from}, connectionId: ${con.id}`)
+          this._emit('connection-process', `switchboard process: Signaling initiator connection to ${item.from}, connectionId: ${con.id}`)
           con._handleAnswerNegotiation(item.negotiation)
         }
       }
@@ -479,6 +479,9 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     const interval = this.config.presenceBroadcastInterval + (Math.random() * 100)
 
     this._presenceBroadcastInterval = setInterval(() => {
+      // We don't need to even broadcast our presence if we've hit our max connections
+      if (this.activeConnections.length >= this.config.maxConnections) { return }
+
       this._broadcastInternal({
         type: 'presence',
         appId: APP_ID,
@@ -614,6 +617,9 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     // offer anyways.
     if (this.getActiveConnectionByAddress(message.address)) { return }
 
+    // And we don't need to field an offer if we're full up
+    if (this.activeConnections.length >= this.config.maxConnections) { return }
+
     this._emit('connection-process', `received offer message from ${message.address}`)
 
     const inactiveConnections = this.connections.filter(con => {
@@ -648,6 +654,9 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     // dont want to proceed.
     if (this.getActiveConnectionByAddress(message.address)) { return }
 
+    // We may have broadcasted an offer and in the interim filled up on connections
+    if (this.activeConnections.length >= this.config.maxConnections) { return }
+
     const connection = this.connections.find(con => {
       return con.address === message.address && // for us
         con.state === 'open' && con.initiator && // open and ready for an answer
@@ -673,8 +682,6 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     this._connections[connection.id] = connection
 
     connection.peer.on('connect', () => {
-      this._emit('add-connection', connection)
-
       // Let's take this opportunity to remove any other connections with the
       // same address that aren't connected. Keep the place clean. It's possible
       // for there to be duplicate connections made in the switchboard process.
@@ -683,6 +690,16 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
           this.destroyConnection(con)
         }
       })
+
+
+      // Sometimes because of the racy nature of connecting we end up having more connections
+      // than we bargained for. If that's the case, we'll just nip this one right in the bud.
+      if (this.activeConnections.length > this.config.maxConnections) {
+        connection.peer.destroy()
+        return
+      }
+
+      this._emit('add-connection', connection)
 
       // Send a welcome log message for the warm fuzzies
       this._broadcastInternal({
