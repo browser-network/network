@@ -3,6 +3,7 @@ import * as t from './types.d'
 import Peer from 'simple-peer'
 import EventEmitter from 'events'
 import { Message } from './Message'
+import * as bnc from '@browser-network/crypto'
 
 const IS_NODE = typeof process !== 'undefined'
 
@@ -40,6 +41,16 @@ type ConnectionProps = {
   *
   */
   suppliedOfferNegotiation?: t.OfferNegotiation
+
+  /**
+  * @description If supplied, the SDP info will be encrypted with EC public key
+  * encryption so that only the foreign address can read it. This is important
+  * because the SDP info contains sensitive IP address related information and is
+  * passed all around the network, and is publicly available on the
+  * switchboard. This should always be supplied when possible, namely when the
+  * network is in encrypted mode.
+  */
+  secret?: t.Secret
 }
 
 export class Connection extends EventEmitter {
@@ -57,9 +68,7 @@ export class Connection extends EventEmitter {
 
   /**
   * @description The public key crypto address of the node on the other side of this
-  * connection. If there is no address on the connection, that means it's an
-  * "open connection", one the node is keeping around and broadcasting
-  * connection information from in RTC "offer" form.
+  * connection.
   */
   address: t.Address
 
@@ -102,6 +111,8 @@ export class Connection extends EventEmitter {
   */
   answer?: t.AnswerNegotiation | t.PendingAnswerNegotiation
 
+  private _secret: t.Secret
+
   /**
   * @description A Connection represents the linking between two network nodes.
   * Each node has many connections. A connection can be in one of three states:
@@ -118,10 +129,11 @@ export class Connection extends EventEmitter {
   constructor(props: ConnectionProps) {
     super()
 
-    const { networkId, selfAddress, foreignAddress, suppliedOfferNegotiation } = props
+    const { networkId, selfAddress, foreignAddress, suppliedOfferNegotiation, secret } = props
 
     this.id = uuid()
     this.address = foreignAddress
+    this._secret = secret
 
     // bringing in wrtc here costs us 2kb in the build size. 0.9kb in the minified version.
     this.peer = new Peer({
@@ -130,12 +142,12 @@ export class Connection extends EventEmitter {
       wrtc: IS_NODE ? require('wrtc') : undefined
     })
 
-    this.peer.on('signal', (data: t.RTCSdp) => {
+    this.peer.on('signal', async (data: t.RTCSdp) => {
       if (data.type === 'offer') {
-        this.offer.sdp = data.sdp
+        this.offer.sdp = await this._conditionallyEncryptSdp(data.sdp)
         this.emit('state-change')
       } else if (data.type === 'answer') {
-        this.answer.sdp = data.sdp
+        this.answer.sdp = await this._conditionallyEncryptSdp(data.sdp)
         this.emit('state-change')
       }
     })
@@ -164,7 +176,12 @@ export class Connection extends EventEmitter {
         timestamp: Date.now()
       } as t.PendingAnswerNegotiation
 
-      this.peer.signal(suppliedOfferNegotiation)
+      this._conditionallyDecryptSdp(suppliedOfferNegotiation.sdp).then(sdp => {
+        const processed = { ...suppliedOfferNegotiation }
+        processed.sdp = sdp
+        this.peer.signal(processed)
+      })
+
 
     } else { // We're fixing to be an open connection until another node answers us
       this.initiator = true
@@ -195,6 +212,17 @@ export class Connection extends EventEmitter {
     if (this.peer.connected) return 'connected' // finished with process and has node on other side
   }
 
+  async _handleAnswerNegotiation(answer: t.AnswerNegotiation) {
+    // Store our answer in encrypted form
+    this.answer = answer
+
+    // If we're in encrypted mode, unencrypt the sdp, otherwise just return it
+    answer.sdp = await this._conditionallyDecryptSdp(answer.sdp)
+
+    // Punch through that nat
+    this.peer.signal(answer)
+  }
+
   private get _isPending() {
     return (
       // we initiated and are still waiting for the stun server to return the sdp info for our open offer
@@ -206,17 +234,33 @@ export class Connection extends EventEmitter {
     )
   }
 
-  _handleAnswerNegotiation(answer: t.AnswerNegotiation) {
-    // Punch through that nat
-    this.answer = answer
-    this.peer.signal(answer)
+  /**
+  * @description If the network is running in encrypted mode, we're encrypting our SDP. So this
+  * encrypts it if we're in encrypted mode.
+  */
+  private async _conditionallyEncryptSdp(sdp: string): Promise<string> {
+    if (!this._secret) return sdp
+
+    return bnc.encrypt(sdp, this.address)
+  }
+
+  /**
+  * @description Similar to above.
+  */
+  private async _conditionallyDecryptSdp(sdp: string): Promise<string> {
+    if (!this._secret) return sdp
+
+    return bnc.decrypt(sdp, this._secret)
   }
 
 }
 
 /**
 * @description A helper mainly for creating multiple connections simultaneously and waiting for them
-* to move out of their pending state
+* to move out of their pending state in convenient promise form
+*
+* TODO Can we just have a method on connection itself called untilReady() that resolves a promise when
+* it's in a ready state?
 */
 export abstract class ConnectionFactory {
   public static async new(props: ConnectionProps): Promise<Connection> {

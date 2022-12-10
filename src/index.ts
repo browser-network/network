@@ -66,7 +66,7 @@ type CommonNetworkProps = {
   config?: Partial<NetworkConfig>
 }
 
-type SecureNetworkProps = CommonNetworkProps & {
+export type SecureNetworkProps = CommonNetworkProps & {
   /**
   * The EC private key that identifies this node on the network. From this,
   * the public key will be derived. That public key is used as the address
@@ -75,7 +75,7 @@ type SecureNetworkProps = CommonNetworkProps & {
   secret: t.Secret
 }
 
-type InsecureNetworkProps = CommonNetworkProps & {
+export type InsecureNetworkProps = CommonNetworkProps & {
   /**
   * @description An arbitrary string used as an identifying address. If this
   * is passed in, it's not a secure network and no encryption will be used.
@@ -83,7 +83,7 @@ type InsecureNetworkProps = CommonNetworkProps & {
   address: string
 }
 
-type NetworkProps = InsecureNetworkProps | SecureNetworkProps
+export type NetworkProps = InsecureNetworkProps | SecureNetworkProps
 
 type MinimumMessage = Partial<Message> & { type: Message['type'], appId: Message['appId'] }
 // TODO I want to do something like this, to tell the compiler that if the user's appId is
@@ -98,7 +98,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   switchboardService: SwitchboardService
   rudeList: RudeList
 
-  private _secret: t.Secret
+  private _secret: t.Secret | undefined
   private _connections: { [connectionId: t.GUID]: Connection } = {}
   private _messageMemory: MessageMemory = new MessageMemory(MEMORY_DURATION)
   private _switchboardTimeout: ReturnType<typeof setTimeout>
@@ -172,7 +172,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   on(type: 'broadcast-message', handler: (message: UserMessage & Message<unknown>) => void): void
   on(type: 'bad-message', handler: (badMessage: any) => void): void
   on(type: 'add-connection', handler: (connection: Connection) => void): void
-  on(type: 'destroy-connection', handler: (id: Connection['id']) => void): void
+  on(type: 'destroy-connection', handler: (connection: Connection) => void): void
   on(type: 'switchboard-response', handler: (book: t.SwitchboardResponse) => void): void
   on(type: 'connection-error', handler: ({ description: string, error: Error }) => void): void
   on(type: 'connection-process', handler: (description: string) => void): void
@@ -187,7 +187,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   private _emit(type: 'broadcast-message', message: Message): void
   private _emit(type: 'bad-message', message: Message): void
   private _emit(type: 'add-connection', connection: Connection): void
-  private _emit(type: 'destroy-connection', id: Connection['id']): void
+  private _emit(type: 'destroy-connection', connection: Connection): void
   private _emit(type: 'switchboard-response', book: t.SwitchboardResponse): void
   private _emit(type: 'connection-error', { description: string, error: Error }): void
   private _emit(type: 'connection-process', description: string): void
@@ -305,6 +305,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
 
     this._messageMemory.add(toBroadcast.id)
 
+    // TODO move this to Connection
     for (const connection of this.activeConnections) {
       try {
         // The difference between write and send is that write queues, send
@@ -402,7 +403,8 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
           networkId: this.networkId,
           selfAddress: this.address,
           foreignAddress: item.from,
-          suppliedOfferNegotiation: item.negotiation
+          suppliedOfferNegotiation: item.negotiation,
+          secret: this._secret
         })
 
       } else {
@@ -428,11 +430,14 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
 
       this._emit('connection-process', `switchboard process: creating new initiator connection to ${address}`)
 
-      return ConnectionFactory.new({
+      const opts = {
         networkId: this.networkId,
         selfAddress: this.address,
-        foreignAddress: address
-      })
+        foreignAddress: address,
+        secret: this._secret
+      }
+
+      return ConnectionFactory.new(opts)
     }).filter(Boolean)
 
     // All these are now in the 'open' state
@@ -515,9 +520,6 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     // Now we've seen this message.
     this._messageMemory.add(message.id)
 
-    // Only handle messages meant for either us or everybody
-    if (!['*', this.address].includes(message.destination)) { return }
-
     // Ensure the message is cryptographically sound
 
     // Now, if we're in secure message mode, we go through each signature, in
@@ -545,6 +547,18 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       message.signatures = signatures
     }
 
+    // Instead of decrementing the ttl value, since the signatures depend on it
+    // staying the same, we count the signatures to see how many hops the message
+    // has taken.
+    if (message.signatures.length < message.ttl) {
+      this._broadcastInternal(message)
+    }
+
+    this._emit('message', message)
+
+    // From here on out, we're only concerned with messages meant for either us or everybody
+    if (!['*', this.address].includes(message.destination)) { return }
+
     // We are only interested in our own application here.
     // The network is actually an application on the network, lolz.
     // Note we're using 'massage' here only so typescript knows
@@ -561,14 +575,6 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       }
     }
 
-    // Instead of decrementing the ttl value, since the signatures depend on it
-    // staying the same, we count the signatures to see how many hops the message
-    // has taken.
-    if (message.signatures.length < message.ttl) {
-      this._broadcastInternal(message)
-    }
-
-    this._emit('message', message)
   }
 
   private async handlePresenceMessage(message: PresenceMessage) {
@@ -602,13 +608,20 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     const connection = await ConnectionFactory.new({
       networkId: this.networkId,
       selfAddress: this.address,
-      foreignAddress: message.address
+      foreignAddress: message.data.address,
+      secret: this._secret
     })
 
     this.registerConnection(connection)
 
-    this._emit('connection-process', `broadcasting offer message to ${message.address}, connectionId: ${connection.id.slice(0, 5)}...`)
-    this._broadcastInternal({ appId: APP_ID, type: 'offer', data: connection.offer })
+    this._emit('connection-process', `broadcasting offer message to ${message.data.address}, connectionId: ${connection.id.slice(0, 5)}...`)
+
+    this._broadcastInternal({
+      type: 'offer',
+      appId: APP_ID,
+      destination: message.data.address,
+      data: connection.offer
+    })
   }
 
   private async handleOfferMessage(message: OfferMessage) {
@@ -638,14 +651,20 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     const connection = await ConnectionFactory.new({
       networkId: this.networkId,
       selfAddress: this.address,
-      foreignAddress: message.address,
-      suppliedOfferNegotiation: message.data
+      foreignAddress: message.data.address,
+      suppliedOfferNegotiation: message.data,
+      secret: this._secret
     })
 
     this.registerConnection(connection)
 
     this._emit('connection-process', `broadcasting answer message to ${message.address}, connectionId: ${connection.id.slice(0, 5)}...`)
-    this._broadcastInternal({ appId: APP_ID, type: 'answer', data: connection.answer })
+    this._broadcastInternal({
+      destination: message.data.address,
+      appId: APP_ID,
+      type: 'answer',
+      data: connection.answer
+    })
   }
 
   private handleAnswerMessage(message: AnswerMessage) {
@@ -757,7 +776,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     peer.end()
     peer.destroy()
     delete this._connections[connection.id]
-    this._emit('destroy-connection', connection.id)
+    this._emit('destroy-connection', connection)
   }
 
   // Get ANY connection we have, no matter the state it's in.

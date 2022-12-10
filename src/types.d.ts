@@ -4,6 +4,7 @@ export type GUID = string
 export type IPAddress = string
 
 export type SDPString = string
+export type EncryptedSDPString = string
 export type SwitchAddress = string
 
 export type PubKey = string
@@ -13,23 +14,23 @@ export type NetworkId = string
 
 export type RTCOfferSdp = {
   type: 'offer'
-  sdp: t.SDPString
+  sdp: SDPString
 }
 
 export type RTCAnswerSdp = {
   type: 'answer'
-  sdp: t.SDPString
+  sdp: SDPString
 }
 
 export type RTCSdp = RTCOfferSdp | RTCAnswerSdp
 
 export type NegotiationCommon = {
-  address: t.Address
+  address: Address // This is the address of the node that created this negotiation
   type: 'offer' | 'answer'
-  sdp: t.SDPString
-  connectionId: t.GUID
-  networkId: t.NetworkId
-  timestamp: t.TimeStamp
+  sdp: SDPString | EncryptedSDPString
+  connectionId: GUID
+  networkId: NetworkId
+  timestamp: TimeStamp
 }
 
 export type OfferNegotiation = { type: 'offer' } & NegotiationCommon
@@ -43,11 +44,11 @@ export type PendingAnswerNegotiation = AnswerNegotiation & { sdp: null }
 export type PendingNegotiation = PendingOfferNegotiation | PendingAnswerNegotiation
 
 export type SwitchboardResponse = {
-  addresses: t.Address[] // all the addresses the switchboard has on book
+  addresses: Address[] // all the addresses the switchboard has on book
   negotiationItems: {
-    for: t.Address
-    from: t.Address
-    negotiation: t.Negotiation
+    for: Address
+    from: Address
+    negotiation: Negotiation
   }[]
 }
 

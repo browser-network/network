@@ -1,5 +1,5 @@
 import tap from 'tap'
-import Network from '../src'
+import Network, { InsecureNetworkProps, NetworkProps, SecureNetworkProps } from '../src'
 import { Networks, ensureEventually } from './util'
 
 type GenerateAddressInfo = () => { address: string } | { secret: string }
@@ -16,6 +16,8 @@ export async function run(generateAddressInfo: GenerateAddressInfo) {
 
     // This is the guy we're gonna fuck with
     const network = networks.nodes[0]
+    // @ts-expect-error
+    const secret = network._secret
     const address = network.address
     const networkId = network.networkId
     const switchAddress =  'http://localhost:5678'
@@ -24,7 +26,15 @@ export async function run(generateAddressInfo: GenerateAddressInfo) {
     // Straight up drop it all. No more existing, sorry bud.
     network.teardown()
 
-    const newNetwork = new Network({ address, networkId, switchAddress, config })
+    const newOpts: Partial<NetworkProps> = { networkId, switchAddress, config }
+
+    if (secret) {
+      (newOpts as SecureNetworkProps).secret = secret
+    } else {
+      (newOpts as InsecureNetworkProps).address = address
+    }
+
+    const newNetwork = new Network(newOpts as NetworkProps)
 
     const timeLimit = 3 * 60 * 1000
 

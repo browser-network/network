@@ -89,40 +89,31 @@ What immediately comes to mind:
   also run a node.js node with the same `networkId`, and it will act as a headless
   browser window, fulfilling all the same functionality as a browser window would.
 
-* Cryptographic security - Network uses `eccrypto` to ensure veracity of messages.
-  It's cryptographically difficult to spoof or modify a message that's not your own.
-  This feature can be turned on for more security or off for faster performance if
-  your network doesn't need to be secure.
+* Cryptographic security - Network uses elliptic curve public key encryption to:
+    - Ensure the veracity of messages: It's cryptographically difficult to
+      spoof or modify a message that's not your own.
+    - Encrypt sensitive IP information: The network passes around SDP strings, information
+      pertaining to WebRTC connections, which contains IP addresses. These are passed
+      through nodes to get to a node that another is not directly connected to.
+      To ensure no snooping, ECIES is used to encrypt the SDP information so that only
+      the recipient it's meant for can read it.
+    - These features can be turned on for more security or off for faster
+      performance if your network doesn't care about these security features and
+      it needs to rapidly send messages, for whatever reason.
+
 
 ### How it works
 
 When you first open the webpage, the app does need some way to find at least
 one node on the network. So we have a [switching service](#the-switching-service).
 
-Once we connect to another node that's in a network (by we here, I mean a node,
-if the reader will allow), then we'll start to hear [messages](#messages) from
-our "neighbor" nodes, which is to say, those in the network we're directly
-connected to. The messages may originally come from those neighbors or they may not. Each
-message has a ttl (time to live). If we receive a message with a ttl > 1, we decrement it and
-pass it along on to our neighbors. In this way, the whole network can receive
-messages even though not every node is connected to each other.
+Once we connect to another node that's in a network we'll start to hear
+[messages](#messages) from the whole network, including nodes we're not connected to.
 
-Some of the messages we'll be hearing will be open connection information
-(rtc "offer" SDP info). If one of those is for someone we're not yet connected
-to, we'll generate a response (rtc "answer" SDP info based on the original offer),
-and send that response back out into the network to the node that originally sent it.
-If they receive it, a direct connection will be established. It's by this means
-that the network is self healing.
-
-There are various schemes in place for efficiency.
-
-- Message id memory so as not to repeat rebroadcasts of messages
-- A rude list. If you get on the rude list, you get dropped and blocked.
-- Connection garbage collection. WebRTC connections are unstable. A garbage
-  collector periodically cleans bad connections making room for new ones.
-- Tunable max connections - dial up or down the max number of connections you want
-  to have in real time. Network won't make any new connections while there
-  are more than that setting (`config.maxConnections`).
+Some of the messages we'll be hearing will be from nodes we're not directly
+connected to. In that case, the we'll rapidly negotiate a connection with them
+by relaying our negotiation via the nodes we are mutually connected to. It's by
+this means that the network is self healing.
 
 ### The Switching Service
 
@@ -132,6 +123,12 @@ network, you'll ping the switching service and find and connect to one node
 who's already in the network. Then immediately you'll start receiving
 connection information from other nodes in the network and you'll rapidly
 bolster your connectivity.
+
+Once a node is connected to the network, it slows way down on its checking in
+with the switchboard. This helps regulate traffic to the switchboard while ensuring
+a speedy initial connection with the network. Once that initial connection is made,
+the node doesn't need to communicate with the switchboard at all, except to help
+future nodes discover the network.
 
 The switching service has negligable processing and memory footprints. It
 operates only in memory, it doesn't need a database or write to disk in any
@@ -172,7 +169,7 @@ messages in the browser console.
       const network = window.network = new Network.default({
         switchAddress: 'http://localhost:5678', // Run npx `@browser-network/switchboard` to get this running locally
         address: 'my-address-' + Date.now(), // Each window should have its own address, hence the Date.now()
-        networkId: 'test-network' // Everyone using this id will receive messages from each other
+        networkId: 'test-network' // Everyone using this id on the same switchboard will receive messages from each other
       })
 
       network.on('message', console.log)
@@ -262,13 +259,7 @@ const network = new Net<MyMessages>({
   networkId: 'a87wyr-awfhoiaw7yr-3hikauweawef-ryaiw73yriawrh-faweflawe',
 
   // See more below...
-  config:{
-    offerBroadcastInterval: 1000 * 5,
-    switchboardRequestInterval: 1000 * 5,
-    garbageCollectInterval: 1000 * 5,
-    maxMessageRateBeforeRude: 1000,
-    maxConnections: 10
-  }
+  config: {}
 })
 ```
 
@@ -323,10 +314,10 @@ from what's above, which is required.
 
 ---
 
-Network also exposes a way to see all of the connections currently established:
+Network also exposes a getter to see all of the connections currently established:
 
 ```ts
-network.connections() // -> Connection[]
+network.activeConnections // -> Connection[]
 ```
 
 See more about [the Connection type](src/Connection.d.ts)
@@ -351,16 +342,4 @@ TODO
   a security vulnerability.
 * Ability to export an offer/answer into an easily exchanged, reasonably sized string.
   This would allow any switch at all to be used to create a connection, easily, breaking
-  the reliance on any specific switchboard.
-* Mask sdp information. Since we are sending sdp info to an address, we can use public key encryption
-  with a diffie helman key exchange to encrypt the sdp info so that only the destination address
-  can read it. Note that this is done, there should be a note about it specifically not being encrypted
-  in an insecure network. There are two instances right now where the network leaks IP
-  addresses within that big SDP string. The first is when two nodes are negotiating a connection via
-  messages on the network, everybody can see their IPs. This isn't that severe because
-  if you're joining the network, I guess you kind of expect to see other people's IPs.
-  However, it'll be more secure this way. The second is the switchboard currently has a feature
-  whereby you can get everything on the switchboard's books. This is super handy for dev
-  information but as it stands it leaks everybody's IP, even to people who aren't trying
-  to join the network. That endpoint should either be removed or the sdp info should be
-  encrypted.
+  the reliance on any specific switchboard mechanism.
