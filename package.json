@@ -15,7 +15,7 @@
     "compile:pack:min": "uglifyjs umd/network.js --compress -o umd/network.min.js",
     "build": "npm run clean; npm-run-all compile:**",
     "build:watch": "nodemon -e ts,json -i dist -i build -i umd -x 'npm run compile:ts && npm run compile:pack'",
-    "test": "tap --ts --no-timeout --no-coverage test/*.test.ts",
+    "test": "sh -c '(cd ../switchboard && npm run build >/dev/null && PORT=5678 node dist/index.js >/dev/null 2>&1) & switchboard=$!; trap \"kill $switchboard 2>/dev/null\" EXIT; sleep 1; ./node_modules/.bin/tap --ts --no-timeout --no-coverage test/*.test.ts'",
     "test:watch": "nodemon -e ts -w test/ -x 'npm run test'",
     "start:dev": "node serve.js & npm run build:watch",
     "release": "npm run build && np --no-cleanup --no-tests --no-yarn --message=\"New release! Version: %s\""
@@ -47,7 +47,7 @@
     "axios": "^0.26.1",
     "simple-peer": "^9.11.1",
     "uuid": "^8.3.2",
-    "wrtc": "^0.4.7"
+    "wrtc": "npm:@roamhq/wrtc@^0.9.1"
   },
   "devDependencies": {
     "@types/node": "^16",
