@@ -46,6 +46,12 @@ export type NetworkConfig = {
   */
   maxMessageRateBeforeRude: number
 
+  /** Maximum bytes accepted from a peer in one network message. */
+  maxMessageSize: number
+
+  /** Maximum time a WebRTC negotiation may remain pending or open. */
+  connectionTimeout: number
+
   /**
   * How many connections is a node allowed to have?
   * If this was set to Infinity, the network would be a "connected graph",

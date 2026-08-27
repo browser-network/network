@@ -5,7 +5,9 @@ import EventEmitter from 'events'
 import { Message } from './Message'
 import * as bnc from '@browser-network/crypto'
 
-const IS_NODE = typeof process !== 'undefined'
+declare const window: unknown
+
+const IS_NODE = typeof window === 'undefined'
 
 // A Node has many connections
 // A connection has multiple negotiations, which can each be `pending`
@@ -180,7 +182,7 @@ export class Connection extends EventEmitter {
         const processed = { ...suppliedOfferNegotiation }
         processed.sdp = sdp
         this.peer.signal(processed)
-      })
+      }).catch(error => this.emit('error', error))
 
 
     } else { // We're fixing to be an open connection until another node answers us
@@ -213,14 +215,18 @@ export class Connection extends EventEmitter {
   }
 
   async _handleAnswerNegotiation(answer: t.AnswerNegotiation) {
-    // Store our answer in encrypted form
-    this.answer = answer
+    try {
+      // Store our answer in encrypted form
+      this.answer = answer
 
-    // If we're in encrypted mode, unencrypt the sdp, otherwise just return it
-    answer.sdp = await this._conditionallyDecryptSdp(answer.sdp)
+      // If we're in encrypted mode, unencrypt the sdp, otherwise just return it
+      answer.sdp = await this._conditionallyDecryptSdp(answer.sdp)
 
-    // Punch through that nat
-    this.peer.signal(answer)
+      // Punch through that nat
+      this.peer.signal(answer)
+    } catch (error) {
+      this.emit('error', error)
+    }
   }
 
   private get _isPending() {

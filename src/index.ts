@@ -1,5 +1,4 @@
-// Tried using crypto.randomUUID() but browserify like 10x's the build
-// size to do it.
+// Avoid native randomUUID to keep the browser bundle small.
 import { v4 as uuid } from 'uuid'
 
 import * as t from './types.d'
@@ -86,6 +85,45 @@ export type InsecureNetworkProps = CommonNetworkProps & {
 export type NetworkProps = InsecureNetworkProps | SecureNetworkProps
 
 type MinimumMessage = Partial<Message> & { type: Message['type'], appId: Message['appId'] }
+
+const isMessage = (value: unknown): value is Message => {
+  if (!value || typeof value !== 'object') return false
+  const message = value as Partial<Message>
+  return typeof message.id === 'string' &&
+    typeof message.address === 'string' &&
+    typeof message.appId === 'string' &&
+    typeof message.type === 'string' &&
+    typeof message.destination === 'string' &&
+    Number.isInteger(message.ttl) &&
+    message.ttl! >= 0 && message.ttl! <= 6 &&
+    Array.isArray(message.signatures) &&
+    message.signatures.length <= Math.max(1, message.ttl!) &&
+    message.signatures.every(signature =>
+      !!signature &&
+      typeof signature.signer === 'string' &&
+      typeof signature.signature === 'string'
+    )
+}
+
+const isMessageWithinSizeLimit = (message: Message, maxMessageSize: number) => {
+  try {
+    const serialized = JSON.stringify(message)
+    let size = 0
+    for (let index = 0; index < serialized.length; index += 1) {
+      const code = serialized.charCodeAt(index)
+      if (code < 0x80) size += 1
+      else if (code < 0x800) size += 2
+      else if (code >= 0xd800 && code <= 0xdbff && index + 1 < serialized.length &&
+        serialized.charCodeAt(index + 1) >= 0xdc00 && serialized.charCodeAt(index + 1) <= 0xdfff) {
+        size += 4
+        index += 1
+      } else size += 3
+    }
+    return size <= maxMessageSize
+  } catch {
+    return false
+  }
+}
 // TODO I want to do something like this, to tell the compiler that if the user's appId is
 // in the message they're receiving, then it's definitely their message, aka a UserMessage.
 // So after they do if (message.appId !== myAppId), assuming their appIds are narrower than string,
@@ -104,6 +142,8 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   private _switchboardTimeout: ReturnType<typeof setTimeout>
   private _presenceBroadcastInterval: ReturnType<typeof setInterval>
   private _garbageCollectInterval: ReturnType<typeof setInterval>
+  private _switchboardFailures = 0
+  private _isTornDown = false
   private _eventEmitter: EventEmitter = new EventEmitter()
 
   constructor(props: NetworkProps) {
@@ -130,6 +170,8 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       slowSwitchboardRequestInterval: 1000 * 5,
       garbageCollectInterval: 1000 * 5,
       maxMessageRateBeforeRude: Infinity,
+      maxMessageSize: 64 * 1024,
+      connectionTimeout: 30 * 1000,
       maxConnections: 5
     }, config)
 
@@ -240,6 +282,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   * a network can gracefully stop its own process.
   */
   teardown() {
+    this._isTornDown = true
     this.stopPresenceBroadcastInterval()
     this.stopGarbageCollectionInterval()
     this.stopSwitchboardRequests()
@@ -329,36 +372,27 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   }
 
   /**
-  * @description This is the main guy for communicating with the switchboard.
-  * Call this once and it'll recursively call itself indefinitely, on a timeout.
-  * That timeout is assigned based on network state:
-  *
-  * If there are no active connections, it'll make rapid requests. If there are
-  * active connections, it'll ease back and request more slowly. This enables really
-  * fast connection on startup, especially with empty networks, while preserving
-  * bandwidth for the clients and the switchboard.
-  *
-  * @TODO Currenty if it encounters an error, it won't get to the end and won't
-  * set itself up to be called again. This means a single problem with parsing
-  * or reaching the switchboard will permanently stop switchboard requests
-  * until the app is restarted or doSwitchboardRequest is called again.
+  * @description Poll the switchboard and always schedule a subsequent request.
+  * Requests back off exponentially with jitter after failures.
   */
   private async doSwitchboardRequest() {
-    // Don't even do the request if we've already reached our max,
-    // Just schedule the next one and be on our way.
-    if (this.activeConnections.length >= this.config.maxConnections) {
-      this._switchboardTimeout = setTimeout(() => this.doSwitchboardRequest(), this.config.slowSwitchboardRequestInterval)
-      return
-    }
+    if (this._isTornDown) return
 
-    // First we send an 'empty' request, which is like a 'presence' message. It declares
-    // to the switchboard that we're here, and people can send us offers if they want.
-    const resp = await this.switchboardService.sendEmptyRequest()
+    let interval = this.activeConnections.length
+      ? this.config.slowSwitchboardRequestInterval
+      : this.config.fastSwitchboardRequestInterval
 
-    const numOffers = resp.negotiationItems.filter(item => item.negotiation.type === 'offer').length
-    const numAnswers = resp.negotiationItems.filter(item => item.negotiation.type === 'answer').length
-    this._emit('connection-process', `received switchboard response with ${numOffers} offers and ${numAnswers} answers`)
-    this._emit('switchboard-response', resp)
+    try {
+      // Don't even do the request if we've already reached our max.
+      if (this.activeConnections.length >= this.config.maxConnections) return
+
+      const resp = await this.switchboardService.sendEmptyRequest()
+      this._switchboardFailures = 0
+
+      const numOffers = resp.negotiationItems.filter(item => item.negotiation.type === 'offer').length
+      const numAnswers = resp.negotiationItems.filter(item => item.negotiation.type === 'answer').length
+      this._emit('connection-process', `received switchboard response with ${numOffers} offers and ${numAnswers} answers`)
+      this._emit('switchboard-response', resp)
 
     // A response will have potentially offers for people who saw us, or answers
     // for offers we've sent up.
@@ -449,7 +483,7 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
 
     // Send our response negotiations back up. So clean,
     // one request down and one up.
-    this.switchboardService.sendReturnRequest([
+    await this.switchboardService.sendReturnRequest([
       ...answerConnections.map(con => {
         return {
           for: con.address,
@@ -462,15 +496,18 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
           negotiation: con.offer
         }
       })
-
     ])
-
-    // Call ourselves recursively so we can adjust the timing based on network state
-    const interval = this.activeConnections.length
-      ? this.config.slowSwitchboardRequestInterval
-      : this.config.fastSwitchboardRequestInterval
-
-    this._switchboardTimeout = setTimeout(() => this.doSwitchboardRequest(), interval)
+    } catch (error) {
+      this._switchboardFailures += 1
+      const backoff = Math.min(30 * 1000, interval * (2 ** this._switchboardFailures))
+      interval = backoff + Math.floor(Math.random() * Math.min(1000, backoff / 4))
+      const description = 'switchboard request failed; retrying'
+      this._emit('connection-error', { description, error: error as Error })
+    } finally {
+      if (!this._isTornDown) {
+        this._switchboardTimeout = setTimeout(() => this.doSwitchboardRequest(), interval)
+      }
+    }
   }
 
   // Safely start it
@@ -513,6 +550,11 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
   }
 
   private async handleMessage(message: Message) {
+    if (!isMessage(message) || !isMessageWithinSizeLimit(message, this.config.maxMessageSize)) {
+      this._emit('bad-message', message)
+      return
+    }
+
     // If we've already seen this message, we do nothing
     // with it.
     if (this._messageMemory.hasSeen(message.id)) { return }
@@ -530,21 +572,28 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
       // Firstly, if there are no signatures, it is not sound.
       if (message.signatures.length === 0) {
         this._emit('bad-message', message)
+        return
       }
 
-      let signatures: Signature[] = []
-      while (message.signatures.length !== 0) {
-        const signature = message.signatures.pop()
-        signatures.unshift(signature)
-        const isValidSignature = await bnc.verifySignature(message, signature.signature, signature.signer)
+      const origin = message.signatures[0]
+      if (!origin || origin.signer !== message.address) {
+        this._emit('bad-message', message)
+        return
+      }
+
+      const signatures = message.signatures.slice()
+      while (signatures.length !== 0) {
+        const signature = signatures.pop()!
+        const isValidSignature = await bnc.verifySignature(
+          { ...message, signatures },
+          signature.signature,
+          signature.signer
+        )
         if (!isValidSignature) {
           this._emit('bad-message', message)
           return
         }
       }
-
-      // Now we repair the mutation from above
-      message.signatures = signatures
     }
 
     // Instead of decrementing the ttl value, since the signatures depend on it
@@ -735,11 +784,21 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     })
 
     connection.on('message', (message: Message) => {
-      // TODO Add rudelist here
-      // const { address, negotiation } = connection
-      // this.rudeList.registerMessage(connection.negotiation)
-      // if (this.rudeList.isRude(connection.address)) { ... }
+      if (!isMessage(message)) {
+        this._emit('bad-message', message)
+        return
+      }
+      this.rudeList.registerMessage(connection.address)
+      if (this.rudeList.isRude(connection.address)) {
+        this.destroyConnection(connection)
+        return
+      }
       this.handleMessage(message)
+    })
+
+    connection.on('error', (error: Error) => {
+      const description = `Invalid signaling data from ${connection.address}. connectionId: ${connection.id}`
+      this._emit('connection-error', { description, error })
     })
 
     connection.on('bad-message', (message: string) => console.error('Network received a malformed message:', message))
@@ -764,7 +823,10 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     // deemed unfit by SimplePeer
     for (const connectionId in this._connections) {
       const connection = this._connections[connectionId]
-      if (connection.peer.destroyed) {
+      if (connection.peer.destroyed || (
+        connection.state !== 'connected' &&
+        Date.now() - connection.offer.timestamp > this.config.connectionTimeout
+      )) {
         this.destroyConnection(connection)
       }
     }

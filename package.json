@@ -11,8 +11,8 @@
   "scripts": {
     "clean": "shx rm -rf dist build umd; shx mkdir umd",
     "compile:ts": "tsc",
-    "compile:pack": "browserify dist/src/index.js -o umd/network.js -s Network",
-    "compile:pack:min": "uglifyjs umd/network.js --compress -o umd/network.min.js",
+    "compile:pack": "rollup --config rollup.config.mjs",
+    "compile:pack:min": "echo 'Minified UMD output is produced by compile:pack'",
     "build": "npm run clean; npm-run-all compile:**",
     "build:watch": "nodemon -e ts,json -i dist -i build -i umd -x 'npm run compile:ts && npm run compile:pack'",
     "test": "sh -c '(cd ../switchboard && npm run build >/dev/null && PORT=5678 node dist/index.js >/dev/null 2>&1) & switchboard=$!; trap \"kill $switchboard 2>/dev/null\" EXIT; sleep 1; ./node_modules/.bin/tap --ts --no-timeout --no-coverage test/*.test.ts'",
@@ -42,27 +42,34 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@browser-network/crypto": "^0.0.4",
+    "@browser-network/crypto": "file:../crypto",
     "@mapbox/node-pre-gyp": "^1.0.9",
     "axios": "^0.26.1",
+    "events": "3.3.0",
     "simple-peer": "^9.11.1",
     "uuid": "^8.3.2",
     "wrtc": "npm:@roamhq/wrtc@^0.9.1"
   },
   "devDependencies": {
+    "@rollup/plugin-alias": "5.1.1",
+    "@rollup/plugin-commonjs": "28.0.9",
+    "@rollup/plugin-node-resolve": "16.0.3",
+    "@rollup/plugin-replace": "6.0.2",
+    "@rollup/plugin-terser": "0.4.4",
+    "@rollup/plugin-typescript": "12.3.0",
     "@types/node": "^16",
     "@types/simple-peer": "^9.11.4",
     "@types/tap": "^15.0.6",
     "@types/uuid": "^8.3.4",
-    "browserify": "^17.0.0",
     "nodemon": "^2.0.15",
     "np": "^7.6.0",
     "npm-run-all": "^4.1.5",
+    "rollup": "4.52.5",
     "shx": "^0.3.4",
     "tap": "^16.0.1",
     "tap-spec": "^5.0.0",
     "ts-node": "^10.7.0",
-    "typescript": "^4.4.4",
-    "uglify-js": "^3.15.3"
+    "tslib": "2.8.1",
+    "typescript": "^4.4.4"
   }
 }

@@ -23,8 +23,7 @@ export default class RudeList {
   * to here. Whatever schemes RudeList is employing to determine if someone is rude
   * can go here.
   */
-  registerMessage(negotiation: t.Negotiation) {
-    const address = negotiation.address
+  registerMessage(address: t.Address) {
     if (!this._events[address]) this._events[address] = []
     this._events[address].push(Date.now())
   }
@@ -37,7 +36,8 @@ export default class RudeList {
   isRude(address: string): boolean {
     let timestamps = this._events[address] || []
     const now = Date.now()
-    timestamps = timestamps.filter(t => t < now)
+    timestamps = timestamps.filter(timestamp => now - timestamp < 1000)
+    this._events[address] = timestamps
     return timestamps.length > this._maxMessageRate
   }
 
