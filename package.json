@@ -4,6 +4,9 @@
   "description": "A WebRTC based direct peer to peer network in the browser.",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
+  "engines": {
+    "node": ">=22.15.0"
+  },
   "files": [
     "dist/**/*",
     "umd/**/*"
@@ -43,12 +46,11 @@
   "license": "MIT",
   "dependencies": {
     "@browser-network/crypto": "file:../crypto",
-    "@mapbox/node-pre-gyp": "^1.0.9",
-    "axios": "^0.26.1",
+    "axios": "1.20.0",
     "events": "3.3.0",
     "simple-peer": "^9.11.1",
-    "uuid": "^8.3.2",
-    "wrtc": "npm:@roamhq/wrtc@^0.9.1"
+    "uuid": "11.1.1",
+    "wrtc": "npm:@roamhq/wrtc@0.10.0"
   },
   "devDependencies": {
     "@rollup/plugin-alias": "5.1.1",
