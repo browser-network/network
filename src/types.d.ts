@@ -46,6 +46,7 @@ export type PendingNegotiation = PendingOfferNegotiation | PendingAnswerNegotiat
 export type SwitchboardResponse = {
   addresses: Address[] // all the addresses the switchboard has on book
   negotiationItems: {
+    id: GUID
     for: Address
     from: Address
     negotiation: Negotiation

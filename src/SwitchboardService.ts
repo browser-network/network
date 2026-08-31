@@ -1,4 +1,5 @@
 import axios from "axios"
+import { v4 as uuid } from 'uuid'
 import * as t from "./types"
 
 type SwitchboardServiceProps = {
@@ -11,10 +12,12 @@ type SwitchboardRequest = {
   networkId: t.NetworkId
   address: t.Address // our (sender's) addy
   negotiationItems: {
+    id: t.GUID
     for: t.Address
     from: t.Address
     negotiation: t.Negotiation
   }[]
+  acknowledgedNegotiationIds: t.GUID[]
 }
 
 // The switchboard's actions
@@ -35,6 +38,8 @@ type SwitchboardRequest = {
 export default class SwitchboardService {
   props: SwitchboardServiceProps
   requestTimer: ReturnType<typeof setInterval>
+  private outbox: { [id: string]: SwitchboardRequest['negotiationItems'][number] } = {}
+  private acknowledgements = new Set<t.GUID>()
 
   /**
   * @description The SwitchboardService knows about sending requests to the switchboard. It knows
@@ -49,15 +54,26 @@ export default class SwitchboardService {
   * @description Send what amounts to a 'presence' request to the switchboard.
   * This is the only thing that should be called periodically.
   */
-  async sendEmptyRequest(): Promise<t.SwitchboardResponse> {
-    const req: SwitchboardRequest = {
+  private async send(): Promise<t.SwitchboardResponse> {
+    const acknowledgedNegotiationIds = Array.from(this.acknowledgements)
+    const negotiationItems = Object.values(this.outbox)
+    const resp = await axios.post(this.props.switchAddress, {
       networkId: this.props.networkId,
       address: this.props.address,
-      negotiationItems: []
-    }
-
-    const resp = await axios.post(this.props.switchAddress, req)
+      negotiationItems,
+      acknowledgedNegotiationIds
+    } as SwitchboardRequest)
+    for (const item of negotiationItems) delete this.outbox[item.id]
+    for (const id of acknowledgedNegotiationIds) this.acknowledgements.delete(id)
     return resp.data
+  }
+
+  acknowledge(id: t.GUID) {
+    this.acknowledgements.add(id)
+  }
+
+  async sendEmptyRequest(): Promise<t.SwitchboardResponse> {
+    return this.send()
   }
 
   /**
@@ -72,17 +88,12 @@ export default class SwitchboardService {
   * the network in between our periodic requests, we'll send a periodic request, and in the response will be
   * a multitude of offers. Then we'd send an answer for each of those offers in one of these sendReturnRequest's.
   */
-  async sendReturnRequest(items: { for: t.Address, negotiation: t.Negotiation }[]): Promise<t.SwitchboardResponse> {
-    const req: SwitchboardRequest = {
-      networkId: this.props.networkId,
-      address: this.props.address,
-      negotiationItems: items.map(item => {
-        return { from: this.props.address, for: item.for, negotiation: item.negotiation }
-      })
+  async sendReturnRequest(items: { for: t.Address, negotiation: t.Negotiation, id?: t.GUID }[]): Promise<t.SwitchboardResponse> {
+    for (const item of items) {
+      const id = item.id || uuid()
+      this.outbox[id] = { id, from: this.props.address, for: item.for, negotiation: item.negotiation }
     }
-
-    const resp = await axios.post(this.props.switchAddress, req)
-    return resp.data
+    return this.send()
   }
 
 }

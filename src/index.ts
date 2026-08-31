@@ -404,6 +404,9 @@ export default class Network<UserMessage extends MinimumMessage = MinimumMessage
     //   * If we see one we don't have a connection for, create an offer, send it up.
 
     const newAnswerConnections = resp.negotiationItems.map(item => {
+      // An acknowledgement is sent with the next switchboard request after this item
+      // has been accepted for idempotent processing by the connection state machine.
+      this.switchboardService.acknowledge(item.id)
       // Create a new answer connection for each foreign offer
       if (item.negotiation.type === 'offer') {
 
