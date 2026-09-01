@@ -1,0 +1,25 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: network
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: network }
+      - uses: actions/checkout@v4
+        with:
+          repository: browser-network/crypto
+          path: crypto
+      - uses: actions/checkout@v4
+        with:
+          repository: browser-network/switchboard
+          path: switchboard
+      - uses: actions/setup-node@v4
+        with: { node-version: 26.x, cache: npm, cache-dependency-path: network/package-lock.json }
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high
