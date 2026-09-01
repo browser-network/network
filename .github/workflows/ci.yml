@@ -19,6 +19,10 @@ jobs:
           path: switchboard
       - uses: actions/setup-node@v4
         with: { node-version: 26.x, cache: npm, cache-dependency-path: network/package-lock.json }
+      - run: npm ci && npm run build
+        working-directory: crypto
+      - run: npm ci && npm run build
+        working-directory: switchboard
       - run: npm ci
       - run: npm test
       - run: npm run build
