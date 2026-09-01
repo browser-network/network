@@ -115,7 +115,33 @@ connected to. In that case, the we'll rapidly negotiate a connection with them
 by relaying our negotiation via the nodes we are mutually connected to. It's by
 this means that the network is self healing.
 
-### The Switching Service
+### Connectivity and NAT boundary
+
+Browser Network is intentionally **STUN-only**. It does not configure or operate
+TURN relays, and it does not provide a connectivity guarantee across every NAT,
+firewall, corporate network, mobile carrier, or browser backgrounding condition.
+
+WebRTC links succeed when the peers can establish a direct route using the STUN
+configuration supplied by the browser/runtime. Symmetric NATs, restrictive
+firewalls, and networks that block UDP or WebRTC may prevent a connection. An
+application using Browser Network must tolerate unavailable peers and temporary
+partitions; it must not treat `broadcast()` as guaranteed delivery.
+
+This is a deliberate privacy, complexity, and cost trade-off: Browser Network
+never relays application data through TURN infrastructure. Deployers who require
+universal connectivity should choose a system with managed TURN support rather
+than assuming this package will provide it.
+
+### Delivery semantics
+
+Messages are best-effort gossip over peers connected at the time of broadcast.
+A WebRTC data channel is reliable and ordered for its individual live connection,
+but the mesh does not guarantee end-to-end delivery, global ordering, exactly-once
+processing, persistence, or delivery during a partition. Duplicate relay is
+expected; message IDs are deduplicated for one minute. Applications needing
+receipts, durable offline delivery, or strict ordering must implement those
+protocols themselves.
+
 
 The switching service can facilitate a connection between any two nodes that
 are not already connected.  So if you're a node who isn't yet connected to the
