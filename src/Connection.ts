@@ -274,7 +274,8 @@ export abstract class ConnectionFactory {
     const connection = new Connection(props)
 
     return new Promise(resolve => {
-      connection.on('state-change', () => resolve(connection))
+      if (connection.state !== 'pending') return resolve(connection)
+      connection.once('state-change', () => resolve(connection))
     })
   }
 }
