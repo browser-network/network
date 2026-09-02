@@ -137,32 +137,6 @@ export class Connection extends EventEmitter {
     this.address = foreignAddress
     this._secret = secret
 
-    // bringing in wrtc here costs us 2kb in the build size. 0.9kb in the minified version.
-    this.peer = new Peer({
-      initiator: !suppliedOfferNegotiation,
-      trickle: false,
-      wrtc: IS_NODE ? require('wrtc') : undefined
-    })
-
-    this.peer.on('signal', async (data: t.RTCSdp) => {
-      if (data.type === 'offer') {
-        this.offer.sdp = await this._conditionallyEncryptSdp(data.sdp)
-        this.emit('state-change')
-      } else if (data.type === 'answer') {
-        this.answer.sdp = await this._conditionallyEncryptSdp(data.sdp)
-        this.emit('state-change')
-      }
-    })
-
-    this.peer.on('data', (data: Uint8Array) => {
-      const str = data.toString()
-      try {
-        const message = JSON.parse(str) as Message
-        this.emit('message', message)
-      } catch (e) {
-        this.emit('bad-message', str)
-      }
-    })
 
     if (!!suppliedOfferNegotiation) { // We're an answer response connection, not the initiator
       this.initiator = false
@@ -196,6 +170,33 @@ export class Connection extends EventEmitter {
         timestamp: Date.now()
       }
     }
+
+    // bringing in wrtc here costs us 2kb in the build size. 0.9kb in the minified version.
+    this.peer = new Peer({
+      initiator: !suppliedOfferNegotiation,
+      trickle: false,
+      wrtc: IS_NODE ? require('wrtc') : undefined
+    })
+
+    this.peer.on('signal', async (data: t.RTCSdp) => {
+      if (data.type === 'offer') {
+        this.offer.sdp = await this._conditionallyEncryptSdp(data.sdp)
+        this.emit('state-change')
+      } else if (data.type === 'answer') {
+        this.answer.sdp = await this._conditionallyEncryptSdp(data.sdp)
+        this.emit('state-change')
+      }
+    })
+
+    this.peer.on('data', (data: Uint8Array) => {
+      const str = data.toString()
+      try {
+        const message = JSON.parse(str) as Message
+        this.emit('message', message)
+      } catch (e) {
+        this.emit('bad-message', str)
+      }
+    })
 
   }
 
