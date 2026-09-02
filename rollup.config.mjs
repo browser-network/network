@@ -8,6 +8,7 @@ import typescript from '@rollup/plugin-typescript'
 import { fileURLToPath } from 'node:url'
 
 const cryptoEntry = fileURLToPath(new URL('../crypto/umd/crypto.esm.js', import.meta.url))
+const browserProcessShim = 'var process = { nextTick: function (fn) { var args = Array.prototype.slice.call(arguments, 1); queueMicrotask(function () { fn.apply(null, args) }) } };'
 
 const plugins = [
   replace({
@@ -38,12 +39,14 @@ export default {
       file: 'umd/network.js',
       format: 'umd',
       name: 'Network',
+      intro: browserProcessShim,
       sourcemap: true
     },
     {
       file: 'umd/network.min.js',
       format: 'umd',
       name: 'Network',
+      intro: browserProcessShim,
       plugins: [terser()],
       sourcemap: true
     }
